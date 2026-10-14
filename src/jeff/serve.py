@@ -7,6 +7,7 @@
 Answers: choice -> {"type": "choice", "choice": best option, "probabilities": {...}}; noul -> {"type": "noul",
 "noul": P(yes)}; score -> {"type": "score", "score": best level, "probabilities": {...}}. One question per forward pass,
 requests served one at a time. Inputs above the model's input limit (8,192 tokens) get HTTP 422.
+Yes/no answers between 0.2 and 0.8 are committed to 0.199 / 0.801 unless --no-commit is given.
 
     python -m jeff.serve jgeuter/Jeff-1.0-Large --host 0.0.0.0 --port 8013
 """
@@ -69,11 +70,15 @@ def main() -> None:
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8013)
     parser.add_argument("--ready-file", type=Path, default=None, help="written once the server listens")
+    parser.add_argument("--no-commit", action="store_true",
+                        help="return the calibrated P(yes) for yes/no questions instead of committing answers between "
+                             "0.2 and 0.8 to 0.199 / 0.801 (the commitment is on by default; JevBench counts answers "
+                             "in that band as wrong)")
     args = parser.parse_args()
 
     import torch
     started = time.perf_counter()
-    model = JeffModel(args.model, revision=args.revision)
+    model = JeffModel(args.model, revision=args.revision, commit=not args.no_commit)
     for _ in range(3):  # warm-up: kernels, allocator
         model.decider.decide(WARMUP)
     gpu = torch.cuda.get_device_name(0) if torch.cuda.is_available() else "cpu"

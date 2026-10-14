@@ -116,13 +116,19 @@ def served_answer(qtype: str, option_ids: list[str], probabilities: list[float],
 
 
 class JeffModel:
+    """commit (default True): the yes/no commitment of the released serving rule. JevBench counts a yes/no answer with
+    0.2 < P(yes) < 0.8 as wrong, so the rule moves such answers to just outside the nearer edge (0.801 or 0.199).
+    commit=False keeps the calibrated P(yes) (temperatures still apply)."""
+
     def __init__(self, ref: str | Path, revision: str | None = None, device: str = "cuda",
-                 rule: dict | None = None, cudnn_attention: bool = False):
+                 rule: dict | None = None, cudnn_attention: bool = False, commit: bool = True):
         folder = model_folder(ref, revision)
         self.folder = folder
         self.config = json.loads((folder / "jeff_config.json").read_text())
         self.name = self.config.get("name", folder.name)
         self.rule = json.loads((folder / "serving_rule.json").read_text()) if rule is None else rule
+        if not commit:
+            self.rule = {k: v for k, v in self.rule.items() if k != "noul_edge"}
         self.noul_mapping = self.config.get("noul_mapping", "tf-true-first")
         if not cudnn_attention:
             disable_cudnn_attention()
