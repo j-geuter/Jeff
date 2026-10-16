@@ -111,11 +111,26 @@ pip install ".[test]" && pytest                                  # CPU tests of 
 python scripts/smoke_test.py --endpoint http://127.0.0.1:8013   # a running server's answers vs. ours
 ```
 
-The smoke test sends three example questions and compares the probabilities with the answers we got for the same model
-(`scripts/smoke_expected.json`). Other GPUs and drivers can shift them slightly (across A100, H100 and RTX PRO 6000 we
-saw up to about 0.03 on 99% of questions), so it allows a difference of 0.05.
+This test checks the outputs on three example questions against the probabilities we got for the same model
+(`scripts/smoke_expected.json`).
 
 ## Licence
 
 The code is Apache-2.0 (`LICENSE`); it contains code derived from SemIf and JevBench (MIT), see `NOTICE`. The model
 weights are CC BY-NC 4.0, as given in the model cards.
+
+## Citation
+
+If you find this repository helpful, please consider citing our paper:
+
+```bibtex
+@misc{geuter2026releasinginnerjevsimple,
+      title={Releasing the Inner Jev: A Simple Recipe for Open Decision Models}, 
+      author={Jonathan Geuter and Andrew Cheng and David Alvarez-Melis},
+      year={2026},
+      eprint={2610.17205},
+      archivePrefix={arXiv},
+      primaryClass={cs.AI},
+      url={https://arxiv.org/abs/2610.17205}, 
+}
+```
