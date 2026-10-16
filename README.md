@@ -17,11 +17,13 @@ All four are served the same way; the examples below use Jeff-1.0-Large, swap in
 Each question is rendered as a multiple-choice prompt. A decision head turns the last hidden state $h$ into one
 logit per option, and a softmax over the $K$ options gives the probabilities:
 
-$$z = c\tanh(W_0 h / c) + A \mathrm{std}(h) + b, \qquad p = \mathrm{softmax}(z_1, \dots, z_K),$$
+$$z = c\tanh(W_0 h / c) + A \mathrm{std}(h) + b, \qquad p = \mathrm{softmax}(z_1 / T, \dots, z_K / T),$$
 
 where $W_0$ are the language-model-head rows of the answer letters (A, B, C, ...), $c = 30$ is Gemma's final-logit
 soft-capping (Qwen models have none), $\mathrm{std}(h)$ standardizes each feature with statistics computed once on training data, and the
-learned correction $A$, $b$ starts at zero, so training starts exactly at the model's own letter readout.
+learned correction $A$, $b$ starts at zero, so training starts exactly at the model's own letter readout. $T$ is a
+temperature per question type (choice, yes/no, score), fitted on our validation data and stored in the model's
+`serving_rule.json` (for Jeff-1.0-Large: 1.52 for choice, 1.31 for yes/no and score).
 
 Question types: `choice` (2 to 16 options), `noul` (yes/no; the answer is `P(yes)`) and `score` (ordered levels,
 2 to 16). Inputs up to 8,192 tokens.
@@ -39,19 +41,22 @@ get the newest. Instead of the repo id you can also pass a folder that already h
 
 ## Run with Docker
 
-The container has no network access, so download the weights first, to any folder with about 61 GB free
-(`hf` comes with `pip install huggingface_hub`):
+The image holds the code and its dependencies, but not the weights. Download the weights first, to any folder with
+about 61 GB free (`hf` comes with `pip install huggingface_hub`):
 
 ```bash
 export JEFF_DIR=$HOME/models/Jeff-1.0-Large          # any folder you like
 hf download jgeuter/Jeff-1.0-Large --revision 275325a5eab52cce4f109a09ee3832f2eb89fe2f --local-dir "$JEFF_DIR"
 docker build -t jeff .
-docker run --gpus '"device=0"' -v "$JEFF_DIR":/model:ro -p 8013:8013 jeff
+docker run --gpus '"device=0"' -v "$JEFF_DIR":/model:ro -p 127.0.0.1:8013:8013 jeff
 python scripts/smoke_test.py --endpoint http://127.0.0.1:8013      # check it
 ```
 
-The container reads the weights from `/model`. It needs one GPU with the memory given in the table (for the 31B and
-27B models e.g. H100 80GB, H200 or RTX PRO 6000 96GB).
+The container reads the weights from `/model` and needs no network access (it also runs with `--network none`). It
+needs one GPU with the memory given in the table (for the 31B and 27B models e.g. H100 80GB, H200 or RTX PRO 6000
+96GB); `--gpus` needs the [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/)
+on the host. `-p 127.0.0.1:8013:8013` makes the server reachable only from this machine. The server has no
+authentication, so do not expose it to the internet.
 
 ## Requirements
 
@@ -81,7 +86,9 @@ POST /v1/systemone
  "model": "Jeff-1.0-Large", "usage": {"input_tokens": 612, "output_tokens": 0}, "runtime": {...}}
 ```
 
-Each question is one forward pass; questions of one request are answered one after another.
+Each question is one forward pass; questions of one request are answered one after another. Invalid requests,
+questions with more than 16 options and inputs over 8,192 tokens get HTTP 422; a failure during the forward pass (for
+example, out of GPU memory) gets HTTP 500. Both come with `{"error": "..."}`.
 
 Yes/no answers: JevBench counts $0.2 < P(\text{yes}) < 0.8$ as wrong, so by default the server commits such answers to
 0.199 or 0.801 (whichever edge is nearer, as `"urgent"` above). Start it with `--no-commit` (Python: `commit=False`) to get
@@ -97,7 +104,18 @@ model.decide({"ticket": "Refund not received after 14 days"},
                         "criteria": {"billing": "Payments and refunds", "tech": "Technical problems"}}})
 ```
 
+## Tests
+
+```bash
+pip install ".[test]" && pytest                                  # CPU tests of the prompt, head, rule and server
+python scripts/smoke_test.py --endpoint http://127.0.0.1:8013   # a running server's answers vs. ours
+```
+
+The smoke test sends three example questions and compares the probabilities with the answers we got for the same model
+(`scripts/smoke_expected.json`). Other GPUs and drivers can shift them slightly (across A100, H100 and RTX PRO 6000 we
+saw up to about 0.03 on 99% of questions), so it allows a difference of 0.05.
+
 ## Licence
 
 The code is Apache-2.0 (`LICENSE`); it contains code derived from SemIf and JevBench (MIT), see `NOTICE`. The model
-weights have their own licence, given in the model card.
+weights are CC BY-NC 4.0, as given in the model cards.

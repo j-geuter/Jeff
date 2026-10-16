@@ -11,6 +11,6 @@ COPY src ./src
 RUN pip install -r requirements.txt && pip install --no-deps .
 EXPOSE 8013
 # Default: serve a model folder mounted at /model (weights fetched beforehand; works offline).
-# Or pass a Hugging Face repo id instead of /model (then network access and, while private, HF_TOKEN are needed).
+# Or pass a Hugging Face repo id instead of /model (then the container needs network access).
 ENTRYPOINT ["jeff-serve"]
 CMD ["/model", "--host", "0.0.0.0", "--port", "8013"]

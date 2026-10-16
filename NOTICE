@@ -2,15 +2,40 @@ Jeff serving code
 Copyright 2026 Jonathan Geuter, Andrew Cheng, David Alvarez-Melis
 Licensed under the Apache License, Version 2.0 (see LICENSE).
 
-This software contains code derived from the following projects:
+This software contains code derived from the following projects, both under the MIT License (text below):
 
-- SemIf (https://github.com/TheoLeeCJ/SemIf), MIT License.
+- SemIf (https://github.com/TheoLeeCJ/SemIf)
   Copyright (c) 2026 TheoLeeCJ
   src/jeff/prompting.py reimplements SemIf's prompt construction (system message, JSON payload, answer letters A-P).
 
-- JevBench (https://github.com/fstandhartinger/jevbench), MIT License.
+- JevBench (https://github.com/fstandhartinger/jevbench)
   Copyright (c) 2026 Florian Standhartinger and contributors
   src/jeff/typesafe.py maps TypeSafe questions to multiple-choice rows the way JevBench's semif_direct adapter does.
 
-Model weights (Jeff-1.0-Large) are released separately on Hugging Face under their own licence; see the model card.
-They are derived from google/gemma-4-31B-it (Apache License 2.0).
+The model weights are not part of this repository. The Jeff 1.0 models are released on Hugging Face under CC BY-NC 4.0
+(see each model card). Each one is fine-tuned from a base model released under the Apache License 2.0:
+
+  jgeuter/Jeff-1.0-Large      google/gemma-4-31B-it
+  jgeuter/Jeff-1.0-Medium     google/gemma-4-12B-it
+  jgeuter/Jeff-1.0-Qwen-27B   Qwen/Qwen3.6-27B
+  jgeuter/Jeff-1.0-Qwen-4B    Qwen/Qwen3.5-4B
+
+MIT License (SemIf, JevBench):
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
