@@ -4,8 +4,7 @@ A released model folder (or Hugging Face repo) holds the merged weights and toke
 the decision head (head.safetensors + head_config.json), the serving rule (serving_rule.json) and jeff_config.json.
 Each question is rendered as a SemIf-format multiple-choice prompt (options labeled A, B, C, ...; chat template with
 thinking disabled), the model reads it once, the head turns the last hidden state into one logit per option, and the
-serving rule is applied to the softmax. This is the code path we evaluated with (jevhead.jeff), copied unchanged except
-for the loader, which reads the released folder.
+serving rule is applied to the softmax. This computes exactly what we evaluated the released models with.
 
     from jeff import JeffModel
     model = JeffModel("jgeuter/Jeff-1.0-Large")
@@ -20,8 +19,8 @@ import time
 from pathlib import Path
 
 from . import typesafe as T
-from .head import DecisionHead, collect_letter_rows, load_head_safetensors, model_softcap
-from .prompting import encode_prompt
+from .head import load_head
+from .prompting import PROMPT_VERSION, encode_prompt
 
 MAX_TOKENS = 8192          # as in all our evaluations; longer inputs are refused (JevBench counts them as wrong)
 CUDNN_MIN_TOKENS = 8192    # cuDNN attention only for inputs at least this long (see disable_cudnn_attention)
@@ -70,23 +69,18 @@ def load_causal_model(folder: Path, device: str = "cuda", dtype: str = "bfloat16
 class Decider:
     """One model + head; decide(row) -> option probabilities, option logits, input tokens, seconds."""
 
-    def __init__(self, model, tokenizer, head=None, max_tokens: int = MAX_TOKENS):
+    def __init__(self, model, tokenizer, head, max_tokens: int = MAX_TOKENS):
         import torch
         self.model, self.tokenizer, self.max_tokens = model, tokenizer, max_tokens
         self.base = getattr(model, "model", model)
         self.device = next(model.parameters()).device
-        if head is None:  # zero-shot letter readout = slice-initialized head
-            rows = collect_letter_rows(model, tokenizer, 16)
-            head = DecisionHead(rows.shape[1], rows.shape[0], abstain=False, kind="linear",
-                                softcap=model_softcap(model)).float()  # Gemma 4: LM logit capping
-            head.slice_init_(rows)
-        self.readout = head.to(self.device).eval()
+        self.head = head.to(self.device).eval()
         self._torch = torch
         self.cudnn_min_tokens = None   # set: cuDNN attention only for inputs this long (see disable_cudnn_attention)
 
-    def decide(self, row: dict, check_boundary: bool = False) -> tuple[list[float], list[float], int, float]:
+    def decide(self, row: dict) -> tuple[list[float], list[float], int, float]:
         torch = self._torch
-        ids, _, _ = encode_prompt(self.tokenizer, row, self.max_tokens, check_boundary=check_boundary)
+        ids = encode_prompt(self.tokenizer, row, self.max_tokens)
         if self.cudnn_min_tokens is not None:
             torch.backends.cuda.enable_cudnn_sdp(len(ids) >= self.cudnn_min_tokens)
         start = time.perf_counter()
@@ -94,9 +88,7 @@ class Decider:
             hidden = self.base(input_ids=torch.tensor([ids], device=self.device), use_cache=False,
                                return_dict=True).last_hidden_state[:, -1]
             h = hidden.to(torch.bfloat16).float()  # as in our evaluations
-            k = torch.tensor([len(row["options"])], device=self.device)
-            logits, _ = self.readout.option_logits(h, k)
-            logits = logits[0, : len(row["options"])]
+            logits = self.head(h)[0, : len(row["options"])]
             probs = torch.softmax(logits, dim=-1).tolist()
         if self.device.type == "cuda":
             torch.cuda.synchronize(self.device)
@@ -126,20 +118,21 @@ class JeffModel:
         self.folder = folder
         self.config = json.loads((folder / "jeff_config.json").read_text())
         self.name = self.config.get("name", folder.name)
+        for key, supported in (("prompt_version", PROMPT_VERSION), ("noul_mapping", "tf-true-first")):
+            if self.config.get(key, supported) != supported:
+                raise ValueError(f"{folder}: {key} {self.config[key]!r} is not supported (only {supported!r})")
         self.rule = json.loads((folder / "serving_rule.json").read_text()) if rule is None else rule
         if not commit:
             self.rule = {k: v for k, v in self.rule.items() if k != "noul_edge"}
-        self.noul_mapping = self.config.get("noul_mapping", "tf-true-first")
         if not cudnn_attention:
             disable_cudnn_attention()
         model, tokenizer = load_causal_model(folder, device=device)
-        head = load_head_safetensors(folder).float()
-        self.decider = Decider(model, tokenizer, head, int(self.config.get("max_input_tokens", MAX_TOKENS)))
+        self.decider = Decider(model, tokenizer, load_head(folder), int(self.config.get("max_input_tokens", MAX_TOKENS)))
         if not cudnn_attention:
             self.decider.cudnn_min_tokens = CUDNN_MIN_TOKENS
 
     def row(self, state, question: dict, key: str = "q") -> dict:
-        return T.question_row_mapped(state, question, key, self.noul_mapping)
+        return T.question_row(state, question, key)
 
     def answer(self, qtype: str, option_ids: list[str], probabilities: list[float]) -> dict:
         return served_answer(qtype, option_ids, probabilities, self.rule)

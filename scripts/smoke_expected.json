@@ -1,0 +1,219 @@
+{
+ "_note": "Answers of jeff-serve 1.1.1 (torch 2.13.0, transformers 5.17.0) to scripts/smoke_test.py's request, with and without the yes/no commitment; Large, Medium and Qwen-27B on an H100 80GB, Qwen-4B on an A100 slice (MIG 3g.20gb). smoke_test.py compares a running server's answers with these.",
+ "Jeff-1.0-Large": {
+  "commit": {
+   "route": {
+    "type": "choice",
+    "choice": "billing",
+    "probabilities": {
+     "billing": 0.994699,
+     "technical": 0.002728,
+     "shipping": 0.002573
+    }
+   },
+   "urgent": {
+    "type": "noul",
+    "noul": 0.869384
+   },
+   "severity": {
+    "type": "score",
+    "score": 2,
+    "probabilities": {
+     "0": 0.013508,
+     "1": 0.15541,
+     "2": 0.476138,
+     "3": 0.317618,
+     "4": 0.037325
+    }
+   }
+  },
+  "no-commit": {
+   "route": {
+    "type": "choice",
+    "choice": "billing",
+    "probabilities": {
+     "billing": 0.994699,
+     "technical": 0.002728,
+     "shipping": 0.002573
+    }
+   },
+   "urgent": {
+    "type": "noul",
+    "noul": 0.869384
+   },
+   "severity": {
+    "type": "score",
+    "score": 2,
+    "probabilities": {
+     "0": 0.013508,
+     "1": 0.15541,
+     "2": 0.476138,
+     "3": 0.317618,
+     "4": 0.037325
+    }
+   }
+  }
+ },
+ "Jeff-1.0-Medium": {
+  "commit": {
+   "route": {
+    "type": "choice",
+    "choice": "billing",
+    "probabilities": {
+     "billing": 0.999373,
+     "technical": 0.000479,
+     "shipping": 0.000148
+    }
+   },
+   "urgent": {
+    "type": "noul",
+    "noul": 0.972857
+   },
+   "severity": {
+    "type": "score",
+    "score": 3,
+    "probabilities": {
+     "0": 0.020025,
+     "1": 0.142891,
+     "2": 0.345629,
+     "3": 0.463676,
+     "4": 0.027779
+    }
+   }
+  },
+  "no-commit": {
+   "route": {
+    "type": "choice",
+    "choice": "billing",
+    "probabilities": {
+     "billing": 0.999373,
+     "technical": 0.000479,
+     "shipping": 0.000148
+    }
+   },
+   "urgent": {
+    "type": "noul",
+    "noul": 0.972857
+   },
+   "severity": {
+    "type": "score",
+    "score": 3,
+    "probabilities": {
+     "0": 0.020025,
+     "1": 0.142891,
+     "2": 0.345629,
+     "3": 0.463676,
+     "4": 0.027779
+    }
+   }
+  }
+ },
+ "Jeff-1.0-Qwen-27B": {
+  "commit": {
+   "route": {
+    "type": "choice",
+    "choice": "billing",
+    "probabilities": {
+     "billing": 0.997786,
+     "technical": 0.000791,
+     "shipping": 0.001423
+    }
+   },
+   "urgent": {
+    "type": "noul",
+    "noul": 0.811578
+   },
+   "severity": {
+    "type": "score",
+    "score": 2,
+    "probabilities": {
+     "0": 0.036876,
+     "1": 0.232755,
+     "2": 0.504635,
+     "3": 0.204238,
+     "4": 0.021496
+    }
+   }
+  },
+  "no-commit": {
+   "route": {
+    "type": "choice",
+    "choice": "billing",
+    "probabilities": {
+     "billing": 0.997786,
+     "technical": 0.000791,
+     "shipping": 0.001423
+    }
+   },
+   "urgent": {
+    "type": "noul",
+    "noul": 0.811578
+   },
+   "severity": {
+    "type": "score",
+    "score": 2,
+    "probabilities": {
+     "0": 0.036876,
+     "1": 0.232755,
+     "2": 0.504635,
+     "3": 0.204238,
+     "4": 0.021496
+    }
+   }
+  }
+ },
+ "Jeff-1.0-Qwen-4B": {
+  "commit": {
+   "route": {
+    "type": "choice",
+    "choice": "billing",
+    "probabilities": {
+     "billing": 0.986277,
+     "technical": 0.011738,
+     "shipping": 0.001986
+    }
+   },
+   "urgent": {
+    "type": "noul",
+    "noul": 0.199
+   },
+   "severity": {
+    "type": "score",
+    "score": 1,
+    "probabilities": {
+     "0": 0.090623,
+     "1": 0.482172,
+     "2": 0.355945,
+     "3": 0.063306,
+     "4": 0.007954
+    }
+   }
+  },
+  "no-commit": {
+   "route": {
+    "type": "choice",
+    "choice": "billing",
+    "probabilities": {
+     "billing": 0.986277,
+     "technical": 0.011738,
+     "shipping": 0.001986
+    }
+   },
+   "urgent": {
+    "type": "noul",
+    "noul": 0.434312
+   },
+   "severity": {
+    "type": "score",
+    "score": 1,
+    "probabilities": {
+     "0": 0.090623,
+     "1": 0.482172,
+     "2": 0.355945,
+     "3": 0.063306,
+     "4": 0.007954
+    }
+   }
+  }
+ }
+}

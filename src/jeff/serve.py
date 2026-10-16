@@ -6,8 +6,10 @@
 
 Answers: choice -> {"type": "choice", "choice": best option, "probabilities": {...}}; noul -> {"type": "noul",
 "noul": P(yes)}; score -> {"type": "score", "score": best level, "probabilities": {...}}. One question per forward pass,
-requests served one at a time. Inputs above the model's input limit (8,192 tokens) get HTTP 422.
-Yes/no answers between 0.2 and 0.8 are committed to 0.199 / 0.801 unless --no-commit is given.
+requests served one at a time. Invalid requests, questions with more than 16 options and inputs above the model's
+input limit (8,192 tokens) get HTTP 422; a failure in the forward pass (e.g. out of GPU memory) gets HTTP 500. Both
+come with {"error": message}. Yes/no answers between 0.2 and 0.8 are committed to 0.199 / 0.801 unless --no-commit is
+given.
 
     python -m jeff.serve jgeuter/Jeff-1.0-Large --host 0.0.0.0 --port 8013
 """
@@ -16,6 +18,7 @@ from __future__ import annotations
 import argparse
 import json
 import time
+import traceback
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 
@@ -57,6 +60,9 @@ def make_handler(model: JeffModel, meta: dict):
                     tokens, forward = tokens + n, forward + seconds
             except (KeyError, TypeError, ValueError) as error:
                 return self._send(422, {"error": f"{type(error).__name__}: {error}"})
+            except Exception as error:  # e.g. out of GPU memory: answer with the error instead of dropping the connection
+                traceback.print_exc()
+                return self._send(500, {"error": f"{type(error).__name__}: {error}"})
             self._send(200, {"answers": answers, "model": model.name,
                              "usage": {"input_tokens": tokens, "output_tokens": 0},
                              "runtime": {**meta, "forward_seconds": forward, "input_tokens": tokens}})
