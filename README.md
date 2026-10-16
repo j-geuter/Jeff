@@ -1,7 +1,7 @@
 # Jeff: Jev-style decision models from open LLMs
 
 Serving code for the **Jeff 1.0** Jev-style decision models: a state, a typed question, and its options go in, and
-one forward pass returns a probability for each option, all in a single forward pass.
+one forward pass returns a probability for each option.
 
 | Model | Base model (+ LoRA, merged) | Download | GPU memory | Tested revision |
 |---|---|---|---|---|
