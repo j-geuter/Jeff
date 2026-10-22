@@ -58,6 +58,10 @@ if __name__ == "__main__":
     commit = "noul_edge" in body.get("runtime", {}).get("serving_rule", {})
     mode = "commit" if commit else "no-commit"
     reference = json.loads(EXPECTED.read_text()).get(body["model"], {}).get(mode)
+    if body.get("runtime", {}).get("reasoned"):
+        print(f"{body['runtime']['reasoned']} question(s) reasoned; our reference answers are without reasoning, "
+              "so they are not checked (start the server without --reasoning on to check them)")
+        sys.exit(0)
     if reference is None:
         print(f"no reference answers for {body['model']} ({mode}); not checked")
         sys.exit(0)

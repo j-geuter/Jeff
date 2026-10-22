@@ -1,5 +1,5 @@
 {
- "_note": "Answers of jeff-serve 1.1.1 (torch 2.13.0, transformers 5.17.0) to scripts/smoke_test.py's request, with and without the yes/no commitment; Large, Medium and Qwen-27B on an H100 80GB, Qwen-4B on an A100 slice (MIG 3g.20gb). smoke_test.py compares a running server's answers with these.",
+ "_note": "Answers of jeff-serve 1.1.1 (torch 2.13.0, transformers 5.17.0) to scripts/smoke_test.py's request, with and without the yes/no commitment; Large, Medium and Qwen-27B on an H100 80GB, Qwen-4B on an A100 slice (MIG 3g.20gb). smoke_test.py compares a running server's answers with these. Jeff 1.1 entries: jeff-serve 1.2.0 without reasoning (NVIDIA H200); with reasoning on, smoke_test.py does not check questions that reasoned.",
  "Jeff-1.0-Large": {
   "commit": {
    "route": {
@@ -212,6 +212,222 @@
      "2": 0.355945,
      "3": 0.063306,
      "4": 0.007954
+    }
+   }
+  }
+ },
+ "Jeff-1.1-Large": {
+  "commit": {
+   "route": {
+    "type": "choice",
+    "choice": "billing",
+    "probabilities": {
+     "billing": 0.997196,
+     "technical": 0.001631,
+     "shipping": 0.001173
+    }
+   },
+   "urgent": {
+    "type": "noul",
+    "noul": 0.838154
+   },
+   "severity": {
+    "type": "score",
+    "score": 2,
+    "probabilities": {
+     "0": 0.006464,
+     "1": 0.128526,
+     "2": 0.60345,
+     "3": 0.246699,
+     "4": 0.014862
+    }
+   }
+  },
+  "no-commit": {
+   "route": {
+    "type": "choice",
+    "choice": "billing",
+    "probabilities": {
+     "billing": 0.997196,
+     "technical": 0.001631,
+     "shipping": 0.001173
+    }
+   },
+   "urgent": {
+    "type": "noul",
+    "noul": 0.838154
+   },
+   "severity": {
+    "type": "score",
+    "score": 2,
+    "probabilities": {
+     "0": 0.006464,
+     "1": 0.128526,
+     "2": 0.60345,
+     "3": 0.246699,
+     "4": 0.014862
+    }
+   }
+  }
+ },
+ "Jeff-1.1-Qwen-27B": {
+  "commit": {
+   "route": {
+    "type": "choice",
+    "choice": "billing",
+    "probabilities": {
+     "billing": 0.997544,
+     "technical": 0.00118,
+     "shipping": 0.001276
+    }
+   },
+   "urgent": {
+    "type": "noul",
+    "noul": 0.878913
+   },
+   "severity": {
+    "type": "score",
+    "score": 2,
+    "probabilities": {
+     "0": 0.02568,
+     "1": 0.310902,
+     "2": 0.495069,
+     "3": 0.153881,
+     "4": 0.014467
+    }
+   }
+  },
+  "no-commit": {
+   "route": {
+    "type": "choice",
+    "choice": "billing",
+    "probabilities": {
+     "billing": 0.997544,
+     "technical": 0.00118,
+     "shipping": 0.001276
+    }
+   },
+   "urgent": {
+    "type": "noul",
+    "noul": 0.878913
+   },
+   "severity": {
+    "type": "score",
+    "score": 2,
+    "probabilities": {
+     "0": 0.02568,
+     "1": 0.310902,
+     "2": 0.495069,
+     "3": 0.153881,
+     "4": 0.014467
+    }
+   }
+  }
+ },
+ "Jeff-1.1-Medium": {
+  "commit": {
+   "route": {
+    "type": "choice",
+    "choice": "billing",
+    "probabilities": {
+     "billing": 0.998049,
+     "technical": 0.001472,
+     "shipping": 0.00048
+    }
+   },
+   "urgent": {
+    "type": "noul",
+    "noul": 0.893771
+   },
+   "severity": {
+    "type": "score",
+    "score": 2,
+    "probabilities": {
+     "0": 0.018144,
+     "1": 0.237314,
+     "2": 0.527515,
+     "3": 0.19358,
+     "4": 0.023446
+    }
+   }
+  },
+  "no-commit": {
+   "route": {
+    "type": "choice",
+    "choice": "billing",
+    "probabilities": {
+     "billing": 0.998049,
+     "technical": 0.001472,
+     "shipping": 0.00048
+    }
+   },
+   "urgent": {
+    "type": "noul",
+    "noul": 0.893771
+   },
+   "severity": {
+    "type": "score",
+    "score": 2,
+    "probabilities": {
+     "0": 0.018144,
+     "1": 0.237314,
+     "2": 0.527515,
+     "3": 0.19358,
+     "4": 0.023446
+    }
+   }
+  }
+ },
+ "Jeff-1.1-Qwen-4B": {
+  "commit": {
+   "route": {
+    "type": "choice",
+    "choice": "billing",
+    "probabilities": {
+     "billing": 0.992897,
+     "technical": 0.00538,
+     "shipping": 0.001723
+    }
+   },
+   "urgent": {
+    "type": "noul",
+    "noul": 0.801
+   },
+   "severity": {
+    "type": "score",
+    "score": 1,
+    "probabilities": {
+     "0": 0.124994,
+     "1": 0.494052,
+     "2": 0.287616,
+     "3": 0.081542,
+     "4": 0.011796
+    }
+   }
+  },
+  "no-commit": {
+   "route": {
+    "type": "choice",
+    "choice": "billing",
+    "probabilities": {
+     "billing": 0.992897,
+     "technical": 0.00538,
+     "shipping": 0.001723
+    }
+   },
+   "urgent": {
+    "type": "noul",
+    "noul": 0.678756
+   },
+   "severity": {
+    "type": "score",
+    "score": 1,
+    "probabilities": {
+     "0": 0.124994,
+     "1": 0.494052,
+     "2": 0.287616,
+     "3": 0.081542,
+     "4": 0.011796
     }
    }
   }
