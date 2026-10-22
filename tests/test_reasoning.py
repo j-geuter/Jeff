@@ -11,7 +11,7 @@ import pytest
 import torch
 
 from jeff import reasoning as R
-from jeff.model import JeffModel
+from jeff.model import JeffModel, split_groups
 from jeff.prompting import encode_prompt
 from jeff.serve import make_handler
 
@@ -217,7 +217,16 @@ def test_many_options_are_answered_in_groups(tiny):
     assert len(answer["probabilities"]) == 40 and answer["choice"] in options
     assert sum(answer["probabilities"].values()) == pytest.approx(1.0, abs=1e-5)
     assert model.decider.last["groups"] == 3 and not model.decider.last["thought"]   # wide questions do not reason
+    for n in range(17, 257):                               # consecutive, at most 16, sizes differ by at most 1
+        groups = split_groups(n, 16)
+        sizes = [len(g) for g in groups]
+        assert sum(groups, []) == list(range(n)) and max(sizes) <= 16 and max(sizes) - min(sizes) <= 1 and min(sizes) >= 2
+        assert len(groups) <= 16
     assert model.decider.reasoner is not None
+    for n in (17, 33, 256):                               # no group may be left with a single option
+        options = {f"o{i}": f"Option number {i}" for i in range(n)}
+        answer = model.decide(STATE, {"w": {"type": "choice", "instructions": "Which fits?", "criteria": options}})["w"]
+        assert len(answer["probabilities"]) == n and sum(answer["probabilities"].values()) == pytest.approx(1.0, abs=1e-5)
     levels = [f"level {i}" for i in range(20)]
     answer = model.decide(STATE, {"s": {"type": "score", "instructions": "How much?", "criteria": levels}})["s"]
     assert 0 <= answer["score"] < 20

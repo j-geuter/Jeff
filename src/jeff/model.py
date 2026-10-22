@@ -62,7 +62,7 @@ def model_folder(ref: str | Path, revision: str | None = None) -> Path:
     text = str(ref)
     if text.startswith((".", "/", "~")) or text.count("/") != 1:   # a path, not a Hugging Face repo id like org/name
         raise FileNotFoundError(f"model folder not found: {text}. Download the weights first, e.g. "
-                                f"`hf download jgeuter/Jeff-1.0-Large --local-dir {text}`, or pass a repo id.")
+                                f"`hf download jgeuter/Jeff-1.1-Large --local-dir {text}`, or pass a repo id.")
     from huggingface_hub import snapshot_download
     return Path(snapshot_download(text, revision=revision))
 
@@ -125,12 +125,12 @@ class Decider:
         return self._decide(row)
 
     def decide_wide(self, row: dict) -> tuple[list[float], list[float], int, float]:
-        """More options than the head has slots (JevBench allows up to 255): score the options in groups of 16, then
-        the group winners against each other; an option's probability is P(its group's winner wins the final) x P(it
+        """More options than the head has slots (JevBench allows up to 255): score the options in groups of at most 16
+        (as equal in size as possible, so none has a single option), then the group winners against each other; an option's probability is P(its group's winner wins the final) x P(it
         within its group). Sums to 1. These questions do not reason."""
         validate_row(row, MAX_WIDE)
         options = row["options"]
-        groups = [list(range(i, min(i + MAX_OPTIONS, len(options)))) for i in range(0, len(options), MAX_OPTIONS)]
+        groups = split_groups(len(options), MAX_OPTIONS)
         inner, winners, tokens, seconds = [], [], 0, 0.0
         reasoner, self.reasoner = self.reasoner, None
         try:
@@ -182,6 +182,13 @@ class Decider:
         if self.device.type == "cuda":
             torch.cuda.synchronize(self.device)
         return probs, logits, len(ids), time.perf_counter() - start
+
+
+def split_groups(n: int, size: int) -> list[list[int]]:
+    """Indices 0..n-1 in consecutive groups of at most `size`, as equal in size as possible (17 -> 9 + 8)."""
+    count = -(-n // size)
+    bounds = [round(i * n / count) for i in range(count + 1)]
+    return [list(range(bounds[i], bounds[i + 1])) for i in range(count)]
 
 
 def served_answer(qtype: str, option_ids: list[str], probabilities: list[float], rule: dict) -> dict:
