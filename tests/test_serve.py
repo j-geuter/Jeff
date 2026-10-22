@@ -21,7 +21,10 @@ class StandInModel:
     name = "stand-in"
 
     def __init__(self, error: Exception | None = None):
-        self.error, self.rule, self.decider = error, {}, self
+        self.error, self.rule, self.decider, self.last = error, {}, self, {}
+
+    def start_request(self):
+        pass
 
     def row(self, state, question, key="q"):
         return T.question_row(state, question, key)

@@ -34,12 +34,13 @@ class DecisionHead(nn.Module):
         self.register_buffer("mu", torch.zeros(d_model))
         self.register_buffer("sigma", torch.ones(d_model))
 
+    def cap(self, z: torch.Tensor) -> torch.Tensor:
+        """The LM's final-logit soft-capping (identity without one)."""
+        return self.softcap * torch.tanh(z / self.softcap) if self.softcap is not None else z
+
     def forward(self, h: torch.Tensor) -> torch.Tensor:
         """h [B, d_model] -> logits [B, k_slots]; a question with k options reads the first k."""
-        z0 = h @ self.base_rows.T
-        if self.softcap is not None:
-            z0 = self.softcap * torch.tanh(z0 / self.softcap)
-        return z0 + self.delta((h - self.mu) / self.sigma)
+        return self.cap(h @ self.base_rows.T) + self.delta((h - self.mu) / self.sigma)
 
 
 def load_head(folder) -> DecisionHead:

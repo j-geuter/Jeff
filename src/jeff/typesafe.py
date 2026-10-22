@@ -37,7 +37,7 @@ def question_options(question: dict) -> list[dict]:
 def question_row(state, question: dict, row_id: str = "jevbench") -> dict:
     """One decision row (prompting.messages input) for a TypeSafe question."""
     return {"id": row_id, "state": state, "question": question["instructions"],
-            "options": question_options(question)}
+            "options": question_options(question), "qtype": question["type"]}
 
 
 def answer(qtype: str, option_ids: list[str], probabilities: list[float]) -> dict:

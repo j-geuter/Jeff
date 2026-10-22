@@ -2,4 +2,4 @@
 from .model import JeffModel
 
 __all__ = ["JeffModel"]
-__version__ = "1.1.1"
+__version__ = "1.2.0"

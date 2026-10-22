@@ -11,7 +11,7 @@ def test_yes_no_question():
     assert T.question_row("state", q, "urgent") == {
         "id": "urgent", "state": "state", "question": "Urgent?",
         "options": [{"id": "true", "description": "true: Reply today"},
-                    {"id": "false", "description": "false: Can wait"}]}
+                    {"id": "false", "description": "false: Can wait"}], "qtype": "noul"}
 
 
 def test_yes_no_question_without_criteria():

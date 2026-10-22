@@ -1,7 +1,8 @@
 """Prompts for decision rows, in the format of SemIf (github.com/TheoLeeCJ/SemIf, MIT).
 
 A row is {"id": str, "state": str | dict | list, "question": str, "options": [{"id": str, "description": str}, ...]}
-with 2 to 16 options. Score questions use the same format: the ordered levels are the options.
+with 2 to 16 options (jeff.model answers questions with up to 256 options in groups of 16). Score questions use the
+same format: the ordered levels are the options.
 
 The prompt is SemIf's: a system message, then the row as a JSON object {evidence, criterion, options} with the options
 labeled A, B, C, ..., rendered with the model's chat template with thinking disabled. Jeff models were trained and
@@ -15,6 +16,7 @@ import json
 
 LETTERS = "ABCDEFGHIJKLMNOP"
 MAX_OPTIONS = len(LETTERS)  # the decision head has one slot per letter
+MAX_WIDE = MAX_OPTIONS * MAX_OPTIONS  # most options of a question answered in groups (jeff.model.Decider.decide_wide)
 PROMPT_VERSION = "direct-options-v1"
 DIRECT_SYSTEM = (
     "Apply the supplied criterion to the supplied evidence. Choose exactly one listed option. "
@@ -22,7 +24,7 @@ DIRECT_SYSTEM = (
 )
 
 
-def validate_row(row: dict) -> None:
+def validate_row(row: dict, max_options: int = MAX_OPTIONS) -> None:
     required = {"id", "state", "question", "options"}
     if not required <= row.keys():
         raise ValueError(f"Row is missing fields: {sorted(required - row.keys())}")
@@ -36,8 +38,8 @@ def validate_row(row: dict) -> None:
     except (TypeError, ValueError) as error:
         raise ValueError("state must be finite JSON-compatible data") from error
     options = row["options"]
-    if not isinstance(options, list) or not 2 <= len(options) <= MAX_OPTIONS:
-        raise ValueError(f"options must contain 2-{MAX_OPTIONS} entries (Jeff has {MAX_OPTIONS} answer slots)")
+    if not isinstance(options, list) or not 2 <= len(options) <= max_options:
+        raise ValueError(f"options must contain 2-{max_options} entries")
     ids = []
     for option in options:
         if not isinstance(option, dict) or not isinstance(option.get("id"), str) or not isinstance(option.get("description"), str):
