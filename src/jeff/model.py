@@ -119,6 +119,8 @@ class Decider:
         """Compile the decision forward pass with torch.compile (one graph for all input lengths). About 30-40% less
         time per decision on an H200; probabilities change by numerical noise only (fused kernels round differently),
         of the same size as changing the input's padding. The first calls compile (a few minutes for the 31B)."""
+        import torch._inductor.config as inductor
+        inductor.emulate_precision_casts = True     # round intermediate results as eager mode does: closer answers
         self.forward = self._torch.compile(self.base, dynamic=True)
 
     def start_request(self) -> None:
