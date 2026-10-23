@@ -135,7 +135,10 @@ identical to those of `--batching off`. When questions share a batch (several re
 in one request), their inputs are padded to the same length and the probabilities change by numerical noise. With 8
 clients sending OpenDecisions questions at once to Jeff-1.1-Large, a question's probabilities changed by 0.004 on
 average (99% of questions: under 0.045, at most 0.125), and 6 of 2,389 yes/no answers near P(yes) = 0.5 moved to the
-other side of the 0.2-0.8 band. Use `--batching off` to reproduce our numbers exactly.
+other side of the 0.2-0.8 band. With vLLM writing the reasoning, reasonings that run together can also come out with
+different words than alone (vLLM's batched kernels round differently), so the answer of a single question that
+reasons can change a lot; over OpenDecisions, Capability with 8 clients stayed within 0.3 points of one request at a
+time for the 27B, 12B and 4B models. Use `--batching off` to reproduce our numbers exactly.
 
 Speed: batching raises throughput most for the smaller models and for reasoning. A forward pass of Jeff-1.1-Large on a
 typical question (300 tokens) already keeps an H200 busy, so batching its one-pass answers adds little. With 8 clients

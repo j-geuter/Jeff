@@ -277,9 +277,11 @@ class VLLMGenerator:
         except ImportError as e:
             raise ImportError("--reasoning-engine vllm needs vLLM: pip install \".[vllm]\" (vllm==0.30.0)") from e
         sizes = sorted({n for n in (1, 2, 4, 8, 16, 32, 64) if n <= max_seqs} | {max_seqs})
+        # max_num_batched_tokens = one full-length prompt: vLLM then reserves the same working memory for several
+        # sequences as for one, which leaves the KV cache of a full-length sequence in the same memory share
         kwargs = dict(model=base, revision=revision, tokenizer=tokenizer, dtype="bfloat16", max_model_len=max_len,
-                      gpu_memory_utilization=memory, max_num_seqs=max_seqs, enable_prefix_caching=False, seed=0,
-                      compilation_config={"cudagraph_capture_sizes": sizes})
+                      gpu_memory_utilization=memory, max_num_seqs=max_seqs, max_num_batched_tokens=max_len,
+                      enable_prefix_caching=False, seed=0, compilation_config={"cudagraph_capture_sizes": sizes})
         try:
             self.llm = LLM(**kwargs, language_model_only=True)     # multimodal checkpoints: the text model only
         except (TypeError, ValueError):
