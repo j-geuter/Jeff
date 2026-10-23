@@ -75,9 +75,11 @@ jeff-serve jgeuter/Jeff-1.1-Large --revision REVISION-LARGE --reasoning on --jev
 
 ## Faster serving (optional)
 
-Three options make the server faster on large GPUs. They change the probabilities by numerical noise only (about 0.005
+These options make the server faster on large GPUs. They change the probabilities by numerical noise only (about 0.005
 on average, at most about 0.15 on single questions; the same size as changing how the input is padded), and we measured
-the released scores with them as well (see the model cards).
+the released scores with them as well (see the model cards). With `--reasoning-engine vllm`, the reasoning text itself
+can differ in a few words from the default (vLLM rounds differently), which changes the answers of the questions that
+reason a little more; on OpenDecisions, Capability stayed within 0.5 points of the default for all four models.
 
 - `--compile`: compiles the decision forward pass with `torch.compile`. On an H200, the median time per decision drops
   from 60 to 43 ms for Jeff-1.1-Large and from 32 to 19 ms for Jeff-1.1-Medium. Startup takes a few minutes longer.
