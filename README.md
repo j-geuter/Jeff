@@ -88,7 +88,7 @@ the released scores with them as well (see the model cards).
   startup (several minutes).
 - For the Qwen models, `pip install flash-linear-attention==0.5.2`: transformers then runs the linear-attention layers
   with these kernels instead of its PyTorch fallback (Jeff-1.1-Qwen-27B: 93 to 61 ms per decision, 53 ms with
-  `--compile`).
+  `--compile`). Use it together with `--compile`: without it, compiling the Qwen models takes hours.
 
 ## Run without Docker
 
