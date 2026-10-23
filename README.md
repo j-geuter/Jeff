@@ -137,8 +137,8 @@ clients sending OpenDecisions questions at once to Jeff-1.1-Large, a question's 
 average (99% of questions: under 0.045, at most 0.125), and 6 of 2,389 yes/no answers near P(yes) = 0.5 moved to the
 other side of the 0.2-0.8 band. With vLLM writing the reasoning, reasonings that run together can also come out with
 different words than alone (vLLM's batched kernels round differently), so the answer of a single question that
-reasons can change a lot; over OpenDecisions, Capability with 8 clients stayed within 0.3 points of one request at a
-time for the 27B, 12B and 4B models. Use `--batching off` to reproduce our numbers exactly.
+reasons can change a lot; over OpenDecisions, Capability with 8 clients stayed within 0.6 points of one request at a
+time for all four models. Use `--batching off` to reproduce our numbers exactly.
 
 Speed: batching raises throughput most for the smaller models and for reasoning. A forward pass of Jeff-1.1-Large on a
 typical question (300 tokens) already keeps an H200 busy, so batching its one-pass answers adds little. With 8 clients
@@ -146,7 +146,7 @@ sending OpenDecisions questions at once to one H200, compared with one request a
 
 | Model | One pass (questions per second) | With reasoning, vLLM (questions per second) |
 |---|---|---|
-| Jeff-1.1-Large | 9.9 -> 13.0 (1.3x) | |
+| Jeff-1.1-Large | 9.9 -> 13.0 (1.3x) | 1.2 -> 2.6 (2.2x) |
 | Jeff-1.1-Qwen-27B | | 1.7 -> 3.0 (1.8x) |
 | Jeff-1.1-Medium | 15.9 -> 26.8 (1.7x) | 0.9 -> 2.3 (2.5x) |
 | Jeff-1.1-Qwen-4B | 12.8 -> 31.8 (2.5x) | 4.6 -> 6.9 (1.5x) |
