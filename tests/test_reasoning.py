@@ -294,3 +294,23 @@ def test_compiled_forward_gives_the_same_answers(tiny, monkeypatch):
     assert calls == [{"dynamic": True}] and fast.decider.forward is not fast.decider.base
     fast.warmup()
     assert fast.decider.decide(row)[0] == pytest.approx(want, abs=1e-5)
+
+
+@pytest.mark.parametrize("kind", ["gemma", "qwen"])
+def test_fast_reasoning_swaps_in_a_copy_of_the_base_weights(tiny, kind):
+    """--fast-reasoning: inside base() the adapted layers hold bf16(W_released - s B A) (close to the base layers),
+    outside it the released weights again; generation uses a static KV cache; the answers are still distributions."""
+    folder, info = tiny(kind)
+    model = load(folder, reasoning=True, think_share=1.0, fast_reasoning=True)
+    reasoner = model.decider.reasoner
+    assert model.fast_reasoning and reasoner.static_cache and not reasoner.delta.handles
+    released, base = dict(model.decider.model.named_modules()), dict(info["base"].named_modules())
+    name = next(iter(info["lora"]))
+    before = released[name].weight.data_ptr()
+    x = torch.randn(3, base[name].in_features, dtype=torch.bfloat16)
+    with torch.no_grad(), reasoner.delta.base():
+        off = released[name](x).float()
+    assert released[name].weight.data_ptr() == before
+    assert torch.allclose(off, base[name](x).float(), atol=0.05, rtol=0.02)
+    answer = model.decide(STATE, {"route": REQUEST["route"]})["route"]
+    assert model.decider.last["thought"] and sum(answer["probabilities"].values()) == pytest.approx(1.0, abs=1e-6)

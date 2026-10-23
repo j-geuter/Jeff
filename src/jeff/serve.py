@@ -115,6 +115,9 @@ def main() -> None:
     group.add_argument("--jevbench-limits", type=on_off, default=False, metavar="on|off",
                        help="the limits we evaluate on JevBench with: mean output tokens per question, share of "
                             "questions that reason, seconds per request (default off)")
+    group.add_argument("--fast-reasoning", action="store_true",
+                       help="write the reasoning with a second copy of the base weights and a static KV cache: about "
+                            "2.4x faster generation on the 31B, needs the model's memory twice (e.g. an H200 for the 31B)")
     group.add_argument("--think-share", type=think_share, default=None,
                        help="share of questions that reason (by their confidence on our validation data), e.g. 0.3 "
                             "or choice=0.2,noul=0.3,score=0.6; default: the released shares")
@@ -130,7 +133,8 @@ def main() -> None:
     model = JeffModel(args.model, revision=args.revision, commit=not args.no_commit, long_input=args.long_input,
                       reasoning=args.reasoning, jevbench_limits=args.jevbench_limits, think_share=args.think_share,
                       think_budget=args.think_budget, max_output_per_decision=args.max_output_per_decision,
-                      request_seconds=args.request_seconds, compile=args.compile)
+                      request_seconds=args.request_seconds, compile=args.compile,
+                      fast_reasoning=args.fast_reasoning)
     model.warmup()
     gpu = torch.cuda.get_device_name(0) if torch.cuda.is_available() else "cpu"
     reasoning = model.reasoning and {k: model.reasoning[k] for k in (

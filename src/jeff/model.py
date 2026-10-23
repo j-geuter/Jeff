@@ -227,7 +227,7 @@ class JeffModel:
                  long_input: str = "filter", reasoning: bool = False, jevbench_limits: bool = False,
                  think_share: float | dict | None = None, think_budget: int | None = None,
                  max_output_per_decision: float | None = None, request_seconds: float | None = None,
-                 compile: bool = False):
+                 compile: bool = False, fast_reasoning: bool = False):
         from . import bidir
         folder = model_folder(ref, revision)
         self.folder = folder
@@ -240,7 +240,7 @@ class JeffModel:
             raise ValueError(f"{folder}: bidirectional {self.config['bidirectional']!r} is not supported")
         if long_input not in LONG_INPUT:
             raise ValueError(f"long_input must be one of {LONG_INPUT}, got {long_input!r}")
-        self.reasoning = None
+        self.reasoning, self.fast_reasoning = None, False
         if reasoning:   # read the settings before loading the weights, so a model without them fails at once
             from .reasoning import settings
             self.reasoning = settings(folder, share=think_share, budget=think_budget, jevbench_limits=jevbench_limits,
@@ -260,8 +260,13 @@ class JeffModel:
             self.decider.compile()
         if self.reasoning is not None:
             from .reasoning import LoraDelta, Reasoner
-            self.decider.reasoner = Reasoner(self.decider, self.reasoning, LoraDelta(model, folder / "adapter"),
-                                             self.rule)
+            copy = fast_reasoning and LoraDelta.copy_fits(model, folder / "adapter")
+            if fast_reasoning and not copy:
+                print("--fast-reasoning: not enough GPU memory for a second copy of the weights; using the hooks",
+                      flush=True)
+            self.fast_reasoning = copy
+            self.decider.reasoner = Reasoner(self.decider, self.reasoning, LoraDelta(model, folder / "adapter", copy=copy),
+                                             self.rule, static_cache=copy)
 
     def warmup(self, times: int = 3) -> None:
         """A few forward passes (kernels, allocator; with compile: the compiled graphs, for short and long inputs),

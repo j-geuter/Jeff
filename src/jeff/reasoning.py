@@ -81,9 +81,14 @@ class LoraDelta:
     """The released LoRA adapter (adapter/, PEFT format) as forward hooks on the adapted linear layers. Inside base(),
     each adapted layer's output loses the adapter's term s B A x (computed in float32, as PEFT computes it), so a layer
     computes bf16(W + s B A) x - s B A x: the base model, up to one bfloat16 rounding of its weights. Outside base() the
-    hooks change nothing: the released (merged) weights. No PEFT dependency."""
+    hooks change nothing: the released (merged) weights. No PEFT dependency.
 
-    def __init__(self, model, folder: Path):
+    copy=True (--fast-reasoning): instead of hooks, a second copy of the adapted layers' weights, bf16(W - s B A), is
+    swapped in inside base() (a pointer swap). Generation then runs at the speed of a plain model (about 1.5x faster on
+    the 31B), at the cost of the adapted layers' memory once more; the base model is again exact up to bfloat16
+    rounding, rounded once more than with the hooks."""
+
+    def __init__(self, model, folder: Path, copy: bool = False):
         import torch
         from safetensors.torch import load_file
         folder = Path(folder)
@@ -98,7 +103,7 @@ class LoraDelta:
             raise ValueError(f"{folder}: expected one lora_A and one lora_B weight per adapted layer")
         modules = dict(model.named_modules())
         device = next(model.parameters()).device
-        self.active, self.handles = False, []
+        self.active, self.handles, self.copies = False, [], []
         for name in names:
             path = name.removeprefix("base_model.model.")
             module = modules.get(path)
@@ -108,7 +113,12 @@ class LoraDelta:
             b = tensors[name + ".lora_B.weight"].float().to(device)
             if a.shape[1] != module.in_features or b.shape[0] != module.out_features or a.shape[0] != b.shape[1]:
                 raise ValueError(f"{folder}: adapter shapes do not match layer {path}")
-            self.handles.append(module.register_forward_hook(self._hook(a, b)))
+            if copy:
+                with torch.no_grad():
+                    w = module.weight
+                    self.copies.append((module, (w.float() - self.scale * (b @ a)).to(w.dtype)))
+            else:
+                self.handles.append(module.register_forward_hook(self._hook(a, b)))
         self.layers = len(names)
 
     def _hook(self, a, b):
@@ -121,21 +131,39 @@ class LoraDelta:
 
     @contextlib.contextmanager
     def base(self):
+        released = [m.weight.data for m, _ in self.copies]
+        for m, w in self.copies:
+            m.weight.data = w
         self.active = True
         try:
             yield
         finally:
             self.active = False
+            for (m, _), w in zip(self.copies, released):
+                m.weight.data = w
+
+    @staticmethod
+    def copy_fits(model, folder: Path, spare_bytes: int = 8 << 30) -> bool:
+        """Whether the GPU has room for a second copy of the adapted layers (plus spare_bytes)."""
+        import torch
+        from safetensors import safe_open
+        with safe_open(str(Path(folder) / "adapter_model.safetensors"), framework="pt") as f:
+            names = {k[len("base_model.model."):-len(".lora_A.weight")] for k in f.keys() if k.endswith(".lora_A.weight")}
+        modules = dict(model.named_modules())
+        need = sum(modules[n].weight.numel() * modules[n].weight.element_size() for n in names if n in modules)
+        device = next(model.parameters()).device
+        return device.type != "cuda" or torch.cuda.mem_get_info(device)[0] > need + spare_bytes
 
 
 class Reasoner:
     """Decides which questions reason (wants), writes and reads the reasoning (think), and keeps the counts the
     limits need. `decider` is the jeff.model.Decider it serves; `rule` the serving rule."""
 
-    def __init__(self, decider, config: dict, delta: LoraDelta, rule: dict):
+    def __init__(self, decider, config: dict, delta: LoraDelta, rule: dict, static_cache: bool = False):
         import torch
         from .prompting import LETTERS
         self.decider, self.config, self.delta, self.rule = decider, dict(config), delta, dict(rule or {})
+        self.static_cache = static_cache          # --fast-reasoning: a static KV cache (with the weight copy)
         tok, head = decider.tokenizer, decider.head
         self._torch = torch
         self._opener = tok.encode(self.config["opener"], add_special_tokens=False)
@@ -197,7 +225,8 @@ class Reasoner:
         with self.delta.base(), bidir.causal(decider.base):
             out = decider.model.generate(input_ids=x, attention_mask=torch.ones_like(x), do_sample=False,
                                          max_new_tokens=int(c["budget"]), eos_token_id=self._stops,
-                                         pad_token_id=self._pad, use_cache=True)
+                                         pad_token_id=self._pad, use_cache=True,
+                                         **({"cache_implementation": "static"} if self.static_cache else {}))
         gen = []
         for token in out[0, len(prompt):].tolist():
             if token in self._stops:
