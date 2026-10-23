@@ -107,8 +107,8 @@ the released scores with them as well (see the model cards).
   ```
 
 With `--compile --fast-reasoning`, the server needs about 8 to 9 minutes to start on an H200 (compilation). The compiled
-code is cached in `/tmp`; with Singularity/Apptainer, bind a real folder there (`-B <folder>:/tmp`), since its default
-`/tmp` is too small.
+code is cached in `/tmp`; with Singularity/Apptainer, bind a folder on a local disk there (`-B <folder>:/tmp`), since its
+default `/tmp` is too small (and vLLM fails to delete its temporary folders on NFS).
 
 ## Run without Docker
 
