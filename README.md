@@ -53,33 +53,52 @@ before the answer:
 3. that distribution is averaged with the one-pass answer (mean of the log-probabilities) and calibrated with its own
    temperature per type.
 
-The thresholds come from our validation data: by default the share of questions that reason is the one we selected
-on held-out data (for Jeff-1.1-Large: no choice questions, 20% of yes/no and 60% of score questions; see
-`reasoning.json`). `--think-share 0.3` (or `--think-share choice=0.2,noul=0.3,score=0.6`) sets other shares, from 0
-(never) to 1 (always); `--think-budget` sets the most tokens per reasoning. The generated tokens are reported as
-`output_tokens`.
+Which questions reason. By default the thresholds come from our validation data: the share of questions that
+reason is the one we selected on held-out data (for Jeff-1.1-Large: no choice questions, 20% of yes/no and 60% of score
+questions; see `reasoning.json`). You can change this in two ways:
 
-`--jevbench-limits on` adds the limits we evaluate on JevBench with, which keep the model within the board's cost and
-latency caps:
+- `--think-share 0.3` (or `--think-share choice=0.2,noul=0.3,score=0.6`): the thresholds at which this share of our
+  validation questions reasons, from 0 (never) to 1 (always). On your data the share can come out higher or lower;
+- `--think-threshold 0.8` (or `--think-threshold noul=0.8,score=0.7`): a question reasons when its calibrated
+  confidence (its largest probability) is below this value.
 
-- the mean output tokens per question, over everything the server answered, never exceed a limit (for Jeff-1.1-Large
-  35): a question reasons only if (output tokens so far + budget) / (questions so far + 1) is at most the limit;
-- no new reasoning while more than 45% of the last 1,000 questions reasoned;
-- no new reasoning once a request has taken 30 seconds.
+`--think-budget` sets the most tokens per reasoning. The generated tokens are reported as `output_tokens`.
 
-`--max-output-per-decision` and `--request-seconds` also work on their own. For JevBench:
+Limits on reasoning (none by default; each is optional):
 
-```bash
-jeff-serve jgeuter/Jeff-1.1-Large --revision REVISION-LARGE --reasoning on --jevbench-limits on --port 8013
-```
+- `--max-output-per-decision L`: the mean output tokens per question, over everything the server has answered, never
+  exceed L. A question reasons only if (output tokens so far + budget) / (questions so far + 1) is at most L; questions
+  still reasoning count with their full budget;
+- `--max-think-share S`: no new reasoning while more than a share S of the last 1,000 questions reasoned (after the
+  first 100). Unlike `--think-share`, this is a hard cap on the questions this server actually receives;
+- `--request-seconds T`: no new reasoning once a request has taken T seconds.
+
+`--jevbench-limits on` sets the values we evaluate JevBench with (Jeff-1.1-Large: 35 tokens, 45%, 30 s). Our JevBench
+submission (reasoning on, these limits, reasoning written by transformers, no batching) is the separate repository
+[Jeff-JevBench](https://github.com/j-geuter/Jeff-JevBench), which pins the release we tested (v1.2.0).
+
+What writes the reasoning (`--reasoning-engine`):
+
+- `auto` (default): vLLM if it is installed (`pip install ".[vllm]"`) and the GPU can hold the model twice, otherwise
+  transformers;
+- `vllm`: the base model in vLLM, on the same GPU, while the decisions stay in this server. The base model is rebuilt
+  once from the release itself (the released weights minus the LoRA adapter in `adapter/`), so nothing else is
+  downloaded. It is written to `--cache-dir` (default `$JEFF_CACHE` or `~/.cache/jeff`; as large as the model's
+  weights) and reused at the next start. `--vllm-base` takes a base model folder or repo id instead. vLLM starts first
+  and takes the model's size plus 12 GB of GPU memory (`--vllm-memory` to change it): an H200 for the 31B and 27B
+  models. On an H200, Jeff-1.1-Large writes about 50 tokens per second (20 ms per token);
+- `transformers`: the decision model itself, with the adapter removed by hooks while it writes. It needs no extra
+  memory, and writes about 15 tokens per second on the 31B (69 ms per token; `--fast-reasoning` keeps a second copy of
+  the base weights and gets 31 ms).
+
+vLLM rounds differently, so the reasoning text can differ in a few words between the engines. On OpenDecisions, the
+Capability with each engine stayed within 0.5 points of the other for all four models.
 
 ## Faster serving (optional)
 
 These options make the server faster on large GPUs. They change the probabilities by numerical noise only (about 0.005
 on average, at most about 0.15 on single questions; the same size as changing how the input is padded), and we measured
-the released scores with them as well (see the model cards). With `--reasoning-engine vllm`, the reasoning text itself
-can differ in a few words from the default (vLLM rounds differently), which changes the answers of the questions that
-reason a little more; on OpenDecisions, Capability stayed within 0.5 points of the default for all four models.
+the released scores with them as well (see the model cards).
 
 - `--compile`: compiles the decision forward pass with `torch.compile`. On an H200, the median time per decision drops
   from 60 to 43 ms for Jeff-1.1-Large and from 32 to 19 ms for Jeff-1.1-Medium. Startup takes a few minutes longer.
@@ -92,25 +111,44 @@ reason a little more; on OpenDecisions, Capability stayed within 0.5 points of t
   with these kernels instead of its PyTorch fallback (Jeff-1.1-Qwen-27B: 93 to 61 ms per decision, 53 ms with
   `--compile`). Use it together with `--compile`: without it, compiling the Qwen models takes hours.
 
-- `--reasoning-engine vllm` (with `--reasoning on`; `pip install ".[vllm]"`, or the Docker image built with
-  `--build-arg EXTRAS="vllm==0.30.0"`): the original base model, run by vLLM on the same GPU, writes the reasoning; the
-  decisions stay in this server. vLLM starts first and takes the base model's size plus 12 GB of the GPU memory
-  (`--vllm-memory` to change it); the GPU must hold the model twice (an H200 for the 31B and 27B models). On an H200,
-  Jeff-1.1-Large writes about 53 tokens per second (19 ms per token, against 69 by default and 31 with
-  `--fast-reasoning`). vLLM needs the base model's own weights (`base_model` and `base_revision` in the model's
-  `jeff_config.json`; for Jeff-1.1-Large about 62 GB). By default they come from the Hugging Face cache (downloaded on
-  the first start); `--vllm-base <folder>` uses a folder instead. With Docker, mount that folder too:
-
-  ```bash
-  hf download google/gemma-4-31B-it --revision 842da3794eaa0b77d5f08bae87a17459d91ff475 --local-dir "$BASE_DIR"
-  docker build --build-arg EXTRAS="vllm==0.30.0" -t jeff-vllm .
-  docker run --gpus '"device=0"' -v "$JEFF_DIR":/model:ro -v "$BASE_DIR":/base:ro -p 127.0.0.1:8013:8013 jeff-vllm \
-    /model --host 0.0.0.0 --port 8013 --compile --reasoning on --reasoning-engine vllm --vllm-base /base
-  ```
-
 With `--compile --fast-reasoning`, the server needs about 8 to 9 minutes to start on an H200 (compilation). The compiled
 code is cached in `/tmp`; with Singularity/Apptainer, bind a folder on a local disk there (`-B <folder>:/tmp`), since its
 default `/tmp` is too small (and vLLM fails to delete its temporary folders on NFS).
+
+## Batching
+
+Requests that arrive at the same time are answered together. The server takes all waiting questions, sorts them by
+length and runs questions of similar length through the model in one forward pass (at most `--max-batch` questions,
+default 32). It never waits for more requests to arrive: a request that finds the server idle is answered at once, on
+its own. With vLLM writing the reasoning, all waiting reasonings run as one vLLM batch while the server goes on
+answering other questions; with transformers, they run one after another. `--batching off` serves one request at a
+time and its questions one after another.
+
+Memory: a batch takes at most `--max-batch-tokens` padded input tokens (questions x longest input). By default this cap
+is measured at start for your model and GPU: the free GPU memory after loading (and after vLLM took its share), minus
+5% of the GPU (at least 2 GB), divided by the memory one full-length (8,192-token) forward pass needs per token. On an
+H200 this gives about 300,000 tokens for Jeff-1.1-Large without vLLM.
+
+Reproducibility: the numbers we report (paper, model cards, JevBench) were measured with one request at a time. With
+one request at a time, batching changes nothing: on 500 OpenDecisions questions, the answers of Jeff-1.1-Large were
+identical to those of `--batching off`. When questions share a batch (several requests at once, or several questions
+in one request), their inputs are padded to the same length and the probabilities change by numerical noise. With 8
+clients sending OpenDecisions questions at once to Jeff-1.1-Large, a question's probabilities changed by 0.004 on
+average (99% of questions: under 0.045, at most 0.125), and 6 of 2,389 yes/no answers near P(yes) = 0.5 moved to the
+other side of the 0.2-0.8 band. Use `--batching off` to reproduce our numbers exactly.
+
+Speed: batching raises throughput most for the smaller models and for reasoning. A forward pass of Jeff-1.1-Large on a
+typical question (300 tokens) already keeps an H200 busy, so batching its one-pass answers adds little. With 8 clients
+sending OpenDecisions questions at once to one H200, compared with one request at a time:
+
+| Model | One pass (questions per second) | With reasoning, vLLM (questions per second) |
+|---|---|---|
+| Jeff-1.1-Large | 9.9 -> 13.0 (1.3x) | |
+| Jeff-1.1-Qwen-27B | | 1.7 -> 3.0 (1.8x) |
+| Jeff-1.1-Medium | 15.9 -> 26.8 (1.7x) | 0.9 -> 2.3 (2.5x) |
+| Jeff-1.1-Qwen-4B | 12.8 -> 31.8 (2.5x) | 4.6 -> 6.9 (1.5x) |
+
+Each request then waits for the others: the median time per request of Jeff-1.1-Large went from 0.06 to 0.4 s.
 
 ## Run without Docker
 
@@ -141,6 +179,15 @@ Options go after the model folder, e.g. with reasoning and the JevBench limits:
 ```bash
 docker run --gpus '"device=0"' -v "$JEFF_DIR":/model:ro -p 127.0.0.1:8013:8013 jeff \
   /model --host 0.0.0.0 --port 8013 --reasoning on --jevbench-limits on
+```
+
+For reasoning written by vLLM, build the image with `--build-arg EXTRAS="vllm==0.30.0"` and mount a writable folder at
+`/cache` (the base model is rebuilt there once, as large as the model; without the mount it is rebuilt at every start):
+
+```bash
+docker build --build-arg EXTRAS="vllm==0.30.0" -t jeff-vllm .
+docker run --gpus '"device=0"' -v "$JEFF_DIR":/model:ro -v "$HOME/.cache/jeff":/cache -p 127.0.0.1:8013:8013 jeff-vllm \
+  /model --host 0.0.0.0 --port 8013 --reasoning on
 ```
 
 The container reads the weights from `/model` and needs no network access (it also runs with `--network none`). It

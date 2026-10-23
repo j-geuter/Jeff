@@ -14,6 +14,8 @@ RUN pip install -r requirements.txt && pip install --no-deps .
 ARG EXTRAS=""
 RUN if [ -n "$EXTRAS" ]; then pip install $EXTRAS; fi
 # vLLM settings, and its caches in /tmp (like torch's)
+# the base model rebuilt for vLLM goes to /cache (mount a folder there to keep it between runs)
+ENV JEFF_CACHE=/cache
 ENV VLLM_NO_USAGE_STATS=1 VLLM_USE_FLASHINFER_SAMPLER=0 VLLM_USE_DEEP_GEMM=0 VLLM_CACHE_ROOT=/tmp/vllm \
     FLASHINFER_WORKSPACE_BASE=/tmp/flashinfer TRITON_CACHE_DIR=/tmp/triton
 EXPOSE 8013
