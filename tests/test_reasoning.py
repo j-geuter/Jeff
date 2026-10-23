@@ -323,11 +323,11 @@ def test_vllm_engine_writes_the_reasoning(tiny, monkeypatch):
     calls = []
 
     class FakeVLLM:
-        def __init__(self, base, revision, tokenizer, max_len, memory):
+        def __init__(self, base, revision, tokenizer, max_len, memory, max_seqs=1):
             calls.append((base, revision, max_len, memory))
 
-        def generate(self, ids, budget, stops):
-            return [ids[-1]] * 3 + [stops[0], 7]           # three tokens, a stop token, anything after it
+        def generate_many(self, prompts, budget, stops):
+            return [[ids[-1]] * 3 + [stops[0], 7] for ids in prompts]    # three tokens, a stop token, anything after
 
     monkeypatch.setattr(R, "VLLMGenerator", FakeVLLM)
     folder, _ = tiny("gemma", "full")

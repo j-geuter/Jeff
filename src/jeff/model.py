@@ -115,6 +115,26 @@ class Decider:
             mask = attention_arg(self.base, x, torch.ones_like(x))
         return self.forward(input_ids=x, attention_mask=mask, use_cache=False, return_dict=True).last_hidden_state[:, -1]
 
+    def hidden_batch(self, batch: list[list[int]]):
+        """hidden() for several inputs in one forward pass [B, d]: right-padded, so every input keeps its positions and
+        (with the padding masked) attends to what it attends to alone; the results differ from hidden() by numerical
+        noise only (about the size of the effect of --compile). One input: exactly hidden()."""
+        torch = self._torch
+        if len(batch) == 1:
+            return self.hidden(batch[0])
+        width = max(len(ids) for ids in batch)
+        pad = self.tokenizer.pad_token_id if self.tokenizer.pad_token_id is not None else 0
+        x = torch.tensor([ids + [pad] * (width - len(ids)) for ids in batch], device=self.device)
+        attention = torch.tensor([[1] * len(ids) + [0] * (width - len(ids)) for ids in batch], device=self.device)
+        if self.bidirectional:
+            from .bidir import attention_arg
+            mask = attention_arg(self.base, x, attention)
+        else:
+            mask = attention
+        out = self.forward(input_ids=x, attention_mask=mask, use_cache=False, return_dict=True).last_hidden_state
+        last = torch.tensor([len(ids) - 1 for ids in batch], device=self.device)
+        return out[torch.arange(len(batch), device=self.device), last]
+
     def compile(self) -> None:
         """Compile the decision forward pass with torch.compile (one graph for all input lengths). About 30-40% less
         time per decision on an H200; probabilities change by numerical noise only (fused kernels round differently),
@@ -158,39 +178,70 @@ class Decider:
         self.last["groups"] = len(groups)
         return probs, [math.log(max(p, 1e-30)) for p in probs], tokens + n, seconds + t
 
-    def _decide(self, row: dict) -> tuple[list[float], list[float], int, float]:
-        torch = self._torch
-        self.last = {"output_tokens": 0, "thought": False, "shortened": False}
-        reasoner = self.reasoner
-        if reasoner is not None and row.get("qtype") not in ("choice", "noul", "score"):
+    def prepare(self, row: dict) -> tuple[dict, list[int], str | bool]:
+        """(row as read, its prompt token ids, how it was shortened or False): long inputs filtered, states the
+        prompt cannot hold sent as text (long_input "filter")."""
+        if self.reasoner is not None and row.get("qtype") not in ("choice", "noul", "score"):
             raise ValueError("reasoning needs the question type in the row (qtype: choice, noul or score)")
         if self.long_input == "filter":
             row = plain_state(row)
         try:
-            ids = encode_prompt(self.tokenizer, row, self.max_tokens)
+            return row, encode_prompt(self.tokenizer, row, self.max_tokens), False
         except ValueError as error:
             if self.long_input != "filter" or "exceed limit" not in str(error):
                 raise
             row, how = shorten(self.tokenizer, row, self.max_tokens, render_prompt)
-            ids = encode_prompt(self.tokenizer, row, self.max_tokens)
-            self.last["shortened"] = how
+            return row, encode_prompt(self.tokenizer, row, self.max_tokens), how
+
+    def cudnn_for(self, tokens: int) -> None:
         if self.cudnn_min_tokens is not None:
-            torch.backends.cuda.enable_cudnn_sdp(len(ids) >= self.cudnn_min_tokens)
+            self._torch.backends.cuda.enable_cudnn_sdp(tokens >= self.cudnn_min_tokens)
+
+    def first(self, h, k: int) -> tuple[list[float], list[float]]:
+        """(probabilities, logits) of the one-pass answer from the last hidden state h [1, d]."""
+        torch = self._torch
+        logits = self.head(h.to(torch.bfloat16).float())[0, :k]     # bfloat16 h, as in our evaluations
+        return torch.softmax(logits, dim=-1).tolist(), logits.tolist()
+
+    def _decide(self, row: dict) -> tuple[list[float], list[float], int, float]:
+        torch = self._torch
+        self.last = {"output_tokens": 0, "thought": False, "shortened": False}
+        reasoner = self.reasoner
+        row, ids, self.last["shortened"] = self.prepare(row)
+        self.cudnn_for(len(ids))
         start = time.perf_counter()
         k = len(row["options"])
         with torch.inference_mode():
-            h = self.hidden(ids).to(torch.bfloat16).float()  # as in our evaluations
-            logits = self.head(h)[0, :k]
-            probs = torch.softmax(logits, dim=-1).tolist()
-            logits = logits.tolist()
+            probs, logits = self.first(self.hidden(ids), k)
             if reasoner is not None:
                 if reasoner.wants(row["qtype"], probs):
                     probs, logits, generated = reasoner.think(ids, k, row["qtype"], logits)
                     self.last.update(output_tokens=generated, thought=True)
-                reasoner.count(self.last["output_tokens"])
+                reasoner.count(self.last["output_tokens"], self.last["thought"])
         if self.device.type == "cuda":
             torch.cuda.synchronize(self.device)
         return probs, logits, len(ids), time.perf_counter() - start
+
+    def batch_tokens(self, reserve: float = 0.05, min_reserve_bytes: int = 2 << 30) -> int:
+        """How many padded input tokens (batch size x longest input) one forward pass can take on this GPU: the free
+        memory (minus a reserve of 5% of the GPU, at least 2 GB) over the peak memory per token of a forward pass on
+        an input of the model's full length. Measured once (the server calls it after loading, with vLLM's share
+        already taken); never below one full-length input."""
+        torch = self._torch
+        if self.device.type != "cuda":
+            return 4 * self.max_tokens
+        ids = [self.tokenizer.pad_token_id or 0] * self.max_tokens
+        torch.cuda.synchronize(self.device)
+        free, total = torch.cuda.mem_get_info(self.device)
+        free += torch.cuda.memory_reserved(self.device) - torch.cuda.memory_allocated(self.device)
+        torch.cuda.reset_peak_memory_stats(self.device)
+        before = torch.cuda.memory_allocated(self.device)
+        with torch.inference_mode():
+            self.hidden(ids)
+        torch.cuda.synchronize(self.device)
+        per_token = max(torch.cuda.max_memory_allocated(self.device) - before, 1) / len(ids)
+        usable = free - max(reserve * total, min_reserve_bytes)
+        return max(self.max_tokens, int(usable / per_token))
 
 
 def split_groups(n: int, size: int) -> list[list[int]]:
@@ -221,16 +272,25 @@ class JeffModel:
 
     reasoning (default False; Jeff 1.1 models): reason when unsure (jeff.reasoning). With it: jevbench_limits (default
     False) applies the limits we evaluate on JevBench with; think_share (a number, or {type: share}) and think_budget
-    override the released share of questions that reason and the most tokens a reasoning may take;
-    max_output_per_decision and request_seconds set those limits on their own."""
+    override the released share of questions that reason and the most tokens a reasoning may take; think_threshold (a
+    number, or {type: threshold}) sets confidence thresholds directly; max_output_per_decision, max_think_share and
+    request_seconds set those limits on their own.
+
+    reasoning_engine: what writes the reasoning. "transformers": this model, with the adapter removed by hooks (or a
+    second weight copy with fast_reasoning); "vllm": the base model in vLLM on the same GPU, rebuilt from this release
+    once (jeff.reasoning.derive_base, under cache_dir) unless vllm_base names one; "auto" (default): vLLM if it is
+    installed and the GPU can hold the model twice, else transformers. vllm_seqs: how many reasonings vLLM writes at
+    once."""
 
     def __init__(self, ref: str | Path, revision: str | None = None, device: str = "cuda",
                  rule: dict | None = None, cudnn_attention: bool = False, commit: bool = True,
                  long_input: str = "filter", reasoning: bool = False, jevbench_limits: bool = False,
                  think_share: float | dict | None = None, think_budget: int | None = None,
                  max_output_per_decision: float | None = None, request_seconds: float | None = None,
-                 compile: bool = False, fast_reasoning: bool = False, reasoning_engine: str = "transformers",
-                 vllm_memory: float | None = None, vllm_base: str | None = None):
+                 compile: bool = False, fast_reasoning: bool = False, reasoning_engine: str = "auto",
+                 vllm_memory: float | None = None, vllm_base: str | None = None, vllm_seqs: int = 1,
+                 think_threshold: float | dict | None = None, max_think_share: float | None = None,
+                 cache_dir: str | Path | None = None):
         from . import bidir
         folder = model_folder(ref, revision)
         self.folder = folder
@@ -247,22 +307,29 @@ class JeffModel:
         if reasoning:   # read the settings before loading the weights, so a model without them fails at once
             from .reasoning import settings
             self.reasoning = settings(folder, share=think_share, budget=think_budget, jevbench_limits=jevbench_limits,
-                                      max_output_per_decision=max_output_per_decision,
-                                      request_seconds=request_seconds)
+                                      threshold=think_threshold, max_output_per_decision=max_output_per_decision,
+                                      max_share=max_think_share, request_seconds=request_seconds)
         self.rule = json.loads((folder / "serving_rule.json").read_text()) if rule is None else rule
         if not commit:
             self.rule = {k: v for k, v in self.rule.items() if k != "noul_edge"}
         if not cudnn_attention:
             disable_cudnn_attention()
+        if reasoning_engine not in ("auto", "transformers", "vllm"):
+            raise ValueError(f"reasoning_engine must be auto, transformers or vllm, got {reasoning_engine!r}")
         generator = None
+        if self.reasoning is not None and reasoning_engine == "auto":
+            from .reasoning import vllm_usable
+            why = "--fast-reasoning asks for transformers" if fast_reasoning else vllm_usable(folder, device)
+            reasoning_engine = "transformers" if why else "vllm"
+            if why:
+                print(f"reasoning with transformers ({why})", flush=True)
         if self.reasoning is not None and reasoning_engine == "vllm":   # before the decision model: see VLLMGenerator
             from . import reasoning as R
+            base = vllm_base or str(R.derive_base(folder, cache_dir))
             generator = R.VLLMGenerator(
-                vllm_base or self.config["base_model"], None if vllm_base else self.config.get("base_revision"),
-                str(folder), int(self.config.get("max_input_tokens", MAX_TOKENS)) + int(self.reasoning["budget"]) + 64,
-                vllm_memory or R.vllm_memory(folder))
-        elif reasoning_engine not in ("transformers", "vllm"):
-            raise ValueError(f"reasoning_engine must be transformers or vllm, got {reasoning_engine!r}")
+                base, None, str(folder),
+                int(self.config.get("max_input_tokens", MAX_TOKENS)) + int(self.reasoning["budget"]) + 64,
+                vllm_memory or R.vllm_memory(folder), max_seqs=vllm_seqs)
         self.reasoning_engine = reasoning_engine if self.reasoning is not None else None
         model, tokenizer = load_causal_model(folder, device=device)
         self.decider = Decider(model, tokenizer, load_head(folder), int(self.config.get("max_input_tokens", MAX_TOKENS)),
@@ -284,9 +351,9 @@ class JeffModel:
             self.decider.reasoner = Reasoner(self.decider, self.reasoning, LoraDelta(model, folder / "adapter", copy=copy),
                                              self.rule, static_cache=copy)
 
-    def warmup(self, times: int = 3) -> None:
-        """A few forward passes (kernels, allocator; with compile: the compiled graphs, for short and long inputs),
-        without reasoning and not counted by its limits."""
+    def warmup(self, times: int = 3, batch: bool = False) -> None:
+        """A few forward passes (kernels, allocator; with compile: the compiled graphs, for short and long inputs, and
+        with batch also for batches), without reasoning and not counted by its limits."""
         reasoner, self.decider.reasoner = self.decider.reasoner, None
         try:
             for i in range(times):
@@ -294,6 +361,11 @@ class JeffModel:
             if self.decider.forward is not self.decider.base:
                 for words in (60, 600, 1500):
                     self.decider.decide({**WARMUP, "state": "The sky is blue. " * words})
+            if batch:
+                rows = [self.decider.prepare({**WARMUP, "state": "The sky is blue. " * words})[1] for words in (5, 60)]
+                with self.decider._torch.inference_mode():
+                    for n in (2, 3):
+                        self.decider.hidden_batch((rows * 2)[:n])
             if reasoner is not None and (reasoner.static_cache or reasoner.generator is not None):
                 # --fast-reasoning: transformers compiles the decoding steps on first use (minutes for the 31B, and
                 # again for the next input lengths); do it now, on inputs of several lengths, not on the first requests

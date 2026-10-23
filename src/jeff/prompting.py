@@ -76,5 +76,6 @@ def encode_prompt(tokenizer, row: dict, max_tokens: int) -> list[int]:
     """Token ids of a row's prompt. Rows longer than max_tokens are rejected, not truncated (as in SemIf)."""
     ids = tokenizer.encode(render_prompt(tokenizer, row), add_special_tokens=False)
     if not ids or len(ids) > max_tokens:
-        raise ValueError(f"Row {row['id']}: {len(ids)} input tokens exceed limit {max_tokens}; no truncation allowed")
+        raise ValueError(f"Row {row['id']}: {len(ids)} input tokens exceed limit {max_tokens} (the maximum context length); "
+                         "no truncation allowed")
     return ids
