@@ -118,6 +118,14 @@ def main() -> None:
     group.add_argument("--fast-reasoning", action="store_true",
                        help="write the reasoning with a second copy of the base weights and a static KV cache: about "
                             "2.4x faster generation on the 31B, needs the model's memory twice (e.g. an H200 for the 31B)")
+    group.add_argument("--reasoning-engine", choices=("transformers", "vllm"), default="transformers",
+                       help="what writes the reasoning: transformers (default) or the base model in vLLM on the same "
+                            "GPU (pip install vllm==0.30.0; about 2x faster generation; the GPU must hold the model "
+                            "twice, e.g. an H200 for the 31B)")
+    group.add_argument("--vllm-memory", type=float, default=None,
+                       help="vLLM's share of the GPU memory (default: the base model's size plus 6 GB)")
+    group.add_argument("--vllm-base", default=None,
+                       help="the base model for vLLM (repo id or folder; default: jeff_config.json's base model)")
     group.add_argument("--think-share", type=think_share, default=None,
                        help="share of questions that reason (by their confidence on our validation data), e.g. 0.3 "
                             "or choice=0.2,noul=0.3,score=0.6; default: the released shares")
@@ -134,7 +142,8 @@ def main() -> None:
                       reasoning=args.reasoning, jevbench_limits=args.jevbench_limits, think_share=args.think_share,
                       think_budget=args.think_budget, max_output_per_decision=args.max_output_per_decision,
                       request_seconds=args.request_seconds, compile=args.compile,
-                      fast_reasoning=args.fast_reasoning)
+                      fast_reasoning=args.fast_reasoning, reasoning_engine=args.reasoning_engine,
+                      vllm_memory=args.vllm_memory, vllm_base=args.vllm_base)
     model.warmup()
     gpu = torch.cuda.get_device_name(0) if torch.cuda.is_available() else "cpu"
     reasoning = model.reasoning and {k: model.reasoning[k] for k in (
@@ -144,7 +153,7 @@ def main() -> None:
     meta = {"model": model.name, "gpu": gpu, "dtype": "bfloat16", "readout": "decision head",
             "probability_origin": "softmax over the options + serving rule", "serving_rule": model.rule,
             "bidirectional": model.config.get("bidirectional"), "long_input": args.long_input, "compile": args.compile,
-            "reasoning": reasoning or None,
+            "reasoning": reasoning or None, "reasoning_engine": model.reasoning_engine,
             "torch": torch.__version__, "cudnn_attention": torch.backends.cuda.cudnn_sdp_enabled()}
     httpd = HTTPServer((args.host, args.port), make_handler(model, meta))
     if args.ready_file:

@@ -229,7 +229,8 @@ class JeffModel:
                  long_input: str = "filter", reasoning: bool = False, jevbench_limits: bool = False,
                  think_share: float | dict | None = None, think_budget: int | None = None,
                  max_output_per_decision: float | None = None, request_seconds: float | None = None,
-                 compile: bool = False, fast_reasoning: bool = False):
+                 compile: bool = False, fast_reasoning: bool = False, reasoning_engine: str = "transformers",
+                 vllm_memory: float | None = None, vllm_base: str | None = None):
         from . import bidir
         folder = model_folder(ref, revision)
         self.folder = folder
@@ -253,6 +254,16 @@ class JeffModel:
             self.rule = {k: v for k, v in self.rule.items() if k != "noul_edge"}
         if not cudnn_attention:
             disable_cudnn_attention()
+        generator = None
+        if self.reasoning is not None and reasoning_engine == "vllm":   # before the decision model: see VLLMGenerator
+            from . import reasoning as R
+            generator = R.VLLMGenerator(
+                vllm_base or self.config["base_model"], None if vllm_base else self.config.get("base_revision"),
+                str(folder), int(self.config.get("max_input_tokens", MAX_TOKENS)) + int(self.reasoning["budget"]) + 64,
+                vllm_memory or R.vllm_memory(folder))
+        elif reasoning_engine not in ("transformers", "vllm"):
+            raise ValueError(f"reasoning_engine must be transformers or vllm, got {reasoning_engine!r}")
+        self.reasoning_engine = reasoning_engine if self.reasoning is not None else None
         model, tokenizer = load_causal_model(folder, device=device)
         self.decider = Decider(model, tokenizer, load_head(folder), int(self.config.get("max_input_tokens", MAX_TOKENS)),
                                bidirectional=self.config.get("bidirectional"), long_input=long_input)
@@ -260,7 +271,10 @@ class JeffModel:
             self.decider.cudnn_min_tokens = CUDNN_MIN_TOKENS
         if compile:
             self.decider.compile()
-        if self.reasoning is not None:
+        if generator is not None:
+            from .reasoning import Reasoner
+            self.decider.reasoner = Reasoner(self.decider, self.reasoning, None, self.rule, generator=generator)
+        elif self.reasoning is not None:
             from .reasoning import LoraDelta, Reasoner
             copy = fast_reasoning and LoraDelta.copy_fits(model, folder / "adapter")
             if fast_reasoning and not copy:
@@ -280,12 +294,15 @@ class JeffModel:
             if self.decider.forward is not self.decider.base:
                 for words in (60, 600, 1500):
                     self.decider.decide({**WARMUP, "state": "The sky is blue. " * words})
-            if reasoner is not None and reasoner.static_cache:
+            if reasoner is not None and (reasoner.static_cache or reasoner.generator is not None):
                 # --fast-reasoning: transformers compiles the decoding steps on first use (minutes for the 31B, and
                 # again for the next input lengths); do it now, on inputs of several lengths, not on the first requests
                 for words in (5, 120, 600):
-                    ids = encode_prompt(self.decider.tokenizer, {**WARMUP, "state": "The sky is blue. " * words},
-                                        self.decider.max_tokens)
+                    try:
+                        ids = encode_prompt(self.decider.tokenizer, {**WARMUP, "state": "The sky is blue. " * words},
+                                            self.decider.max_tokens)
+                    except ValueError:                     # longer than this model's input limit: skip this length
+                        continue
                     with self.decider._torch.inference_mode():
                         reasoner.think(ids, 2, "noul", [0.0, 0.0])
         finally:

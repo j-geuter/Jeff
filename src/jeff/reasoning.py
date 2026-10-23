@@ -155,15 +155,56 @@ class LoraDelta:
         return device.type != "cuda" or torch.cuda.mem_get_info(device)[0] > need + spare_bytes
 
 
+class VLLMGenerator:
+    """--reasoning-engine vllm: the base model in vLLM writes the reasoning (greedy, as the transformers path); the
+    decision passes stay in this server. vLLM runs its engine in its own process on the same GPU. It must start before
+    the decision model is loaded (it checks that its share of the GPU memory is free) and takes `memory` of the GPU's
+    memory: the base model's weights, the KV cache of one sequence and a CUDA graph for one decoding step. `base` is the
+    original base model (repo id or folder; jeff_config.json's base_model at base_revision by default), so the
+    reasoning comes from exactly the base model, not from the released weights minus the adapter."""
+
+    def __init__(self, base: str, revision: str | None, tokenizer: str, max_len: int, memory: float):
+        from vllm import LLM
+        kwargs = dict(model=base, revision=revision, tokenizer=tokenizer, dtype="bfloat16", max_model_len=max_len,
+                      gpu_memory_utilization=memory, max_num_seqs=1, enable_prefix_caching=False, seed=0,
+                      compilation_config={"cudagraph_capture_sizes": [1]})
+        try:
+            self.llm = LLM(**kwargs, language_model_only=True)     # multimodal checkpoints: the text model only
+        except (TypeError, ValueError):
+            self.llm = LLM(**kwargs)
+
+    def generate(self, ids: list[int], budget: int, stops: list[int]) -> list[int]:
+        from vllm import SamplingParams
+        from vllm.inputs import TokensPrompt
+        params = SamplingParams(temperature=0.0, max_tokens=budget, stop_token_ids=stops, detokenize=False,
+                                skip_special_tokens=False)
+        out = self.llm.generate([TokensPrompt(prompt_token_ids=ids)], params, use_tqdm=False)
+        return list(out[0].outputs[0].token_ids)
+
+
+def vllm_memory(folder: Path, spare_bytes: int = 6 << 30) -> float:
+    """vLLM's share of the GPU memory: the base model's weights (as large as the released ones) plus spare_bytes for
+    the KV cache, activations and the CUDA graph."""
+    import torch
+    weights = sum(f.stat().st_size for f in Path(folder).glob("model*.safetensors"))
+    total = torch.cuda.mem_get_info()[1]
+    if 2 * weights + 2 * spare_bytes > total:
+        raise ValueError(f"--reasoning-engine vllm needs the model twice on the GPU ({2 * weights / 1e9:.0f} GB of "
+                         f"weights); this GPU has {total / 1e9:.0f} GB")
+    return round((weights + spare_bytes) / total, 3)
+
+
 class Reasoner:
     """Decides which questions reason (wants), writes and reads the reasoning (think), and keeps the counts the
     limits need. `decider` is the jeff.model.Decider it serves; `rule` the serving rule."""
 
-    def __init__(self, decider, config: dict, delta: LoraDelta, rule: dict, static_cache: bool = False):
+    def __init__(self, decider, config: dict, delta: LoraDelta | None, rule: dict, static_cache: bool = False,
+                 generator: VLLMGenerator | None = None):
         import torch
         from .prompting import LETTERS
         self.decider, self.config, self.delta, self.rule = decider, dict(config), delta, dict(rule or {})
         self.static_cache = static_cache          # --fast-reasoning: a static KV cache (with the weight copy)
+        self.generator = generator                # --reasoning-engine vllm: the base model in vLLM writes
         tok, head = decider.tokenizer, decider.head
         self._torch = torch
         self._opener = tok.encode(self.config["opener"], add_special_tokens=False)
@@ -221,14 +262,18 @@ class Reasoner:
         from . import bidir
         decider, c = self.decider, self.config
         prompt = ids + self._opener
-        x = torch.tensor([prompt], device=decider.device)
-        with self.delta.base(), bidir.causal(decider.base):
-            out = decider.model.generate(input_ids=x, attention_mask=torch.ones_like(x), do_sample=False,
-                                         max_new_tokens=int(c["budget"]), eos_token_id=self._stops,
-                                         pad_token_id=self._pad, use_cache=True,
-                                         **({"cache_implementation": "static"} if self.static_cache else {}))
+        if self.generator is not None:
+            written = self.generator.generate(prompt, int(c["budget"]), self._stops)
+        else:
+            x = torch.tensor([prompt], device=decider.device)
+            with self.delta.base(), bidir.causal(decider.base):
+                out = decider.model.generate(input_ids=x, attention_mask=torch.ones_like(x), do_sample=False,
+                                             max_new_tokens=int(c["budget"]), eos_token_id=self._stops,
+                                             pad_token_id=self._pad, use_cache=True,
+                                             **({"cache_implementation": "static"} if self.static_cache else {}))
+            written = out[0, len(prompt):].tolist()
         gen = []
-        for token in out[0, len(prompt):].tolist():
+        for token in written:
             if token in self._stops:
                 break
             gen.append(token)

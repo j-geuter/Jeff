@@ -314,3 +314,30 @@ def test_fast_reasoning_swaps_in_a_copy_of_the_base_weights(tiny, kind):
     assert torch.allclose(off, base[name](x).float(), atol=0.05, rtol=0.02)
     answer = model.decide(STATE, {"route": REQUEST["route"]})["route"]
     assert model.decider.last["thought"] and sum(answer["probabilities"].values()) == pytest.approx(1.0, abs=1e-6)
+
+
+def test_vllm_engine_writes_the_reasoning(tiny, monkeypatch):
+    """--reasoning-engine vllm: the generator (vLLM, here a stand-in) is built before the decision model with the base
+    model and the memory share, writes the reasoning (cut at the first stop token), and no adapter hooks are needed."""
+    import jeff.reasoning as R
+    calls = []
+
+    class FakeVLLM:
+        def __init__(self, base, revision, tokenizer, max_len, memory):
+            calls.append((base, revision, max_len, memory))
+
+        def generate(self, ids, budget, stops):
+            return [ids[-1]] * 3 + [stops[0], 7]           # three tokens, a stop token, anything after it
+
+    monkeypatch.setattr(R, "VLLMGenerator", FakeVLLM)
+    folder, _ = tiny("gemma", "full")
+    model = load(folder, reasoning=True, think_share=1.0, reasoning_engine="vllm", vllm_memory=0.4, vllm_base="base-x")
+    assert calls == [("base-x", None, 8192 + 4 + 64, 0.4)]
+    assert model.reasoning_engine == "vllm" and model.decider.reasoner.delta is None
+    answer = model.decide(STATE, {"route": REQUEST["route"]})["route"]
+    assert model.decider.last["thought"] and model.decider.last["output_tokens"] == 3
+    assert sum(answer["probabilities"].values()) == pytest.approx(1.0, abs=1e-6)
+    model.warmup()                                         # warms the generator too, not counted
+    assert model.decider.reasoner.served == [1, 3]
+    with pytest.raises(ValueError, match="reasoning_engine"):
+        load(folder, reasoning=True, reasoning_engine="tgi")
