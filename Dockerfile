@@ -13,7 +13,9 @@ RUN pip install -r requirements.txt && pip install --no-deps .
 # the Qwen kernels (see the README). The default image has neither.
 ARG EXTRAS=""
 RUN if [ -n "$EXTRAS" ]; then pip install $EXTRAS; fi
-ENV VLLM_NO_USAGE_STATS=1 VLLM_USE_FLASHINFER_SAMPLER=0 VLLM_USE_DEEP_GEMM=0
+# vLLM settings, and its caches in /tmp (like torch's)
+ENV VLLM_NO_USAGE_STATS=1 VLLM_USE_FLASHINFER_SAMPLER=0 VLLM_USE_DEEP_GEMM=0 VLLM_CACHE_ROOT=/tmp/vllm \
+    FLASHINFER_WORKSPACE_BASE=/tmp/flashinfer TRITON_CACHE_DIR=/tmp/triton
 EXPOSE 8013
 # Default: serve a model folder mounted at /model (weights fetched beforehand; works offline).
 # Or pass a Hugging Face repo id instead of /model (then the container needs network access).

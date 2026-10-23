@@ -95,7 +95,16 @@ the released scores with them as well (see the model cards).
   decisions stay in this server. vLLM starts first and takes the base model's size plus 12 GB of the GPU memory
   (`--vllm-memory` to change it); the GPU must hold the model twice (an H200 for the 31B and 27B models). On an H200,
   Jeff-1.1-Large writes about 53 tokens per second (19 ms per token, against 69 by default and 31 with
-  `--fast-reasoning`). `--vllm-base` sets the base model (repo id or folder; default: the one in `jeff_config.json`).
+  `--fast-reasoning`). vLLM needs the base model's own weights (`base_model` and `base_revision` in the model's
+  `jeff_config.json`; for Jeff-1.1-Large about 62 GB). By default they come from the Hugging Face cache (downloaded on
+  the first start); `--vllm-base <folder>` uses a folder instead. With Docker, mount that folder too:
+
+  ```bash
+  hf download google/gemma-4-31B-it --revision 842da3794eaa0b77d5f08bae87a17459d91ff475 --local-dir "$BASE_DIR"
+  docker build --build-arg EXTRAS="vllm==0.30.0" -t jeff-vllm .
+  docker run --gpus '"device=0"' -v "$JEFF_DIR":/model:ro -v "$BASE_DIR":/base:ro -p 127.0.0.1:8013:8013 jeff-vllm \
+    /model --host 0.0.0.0 --port 8013 --compile --reasoning on --reasoning-engine vllm --vllm-base /base
+  ```
 
 With `--compile --fast-reasoning`, the server needs about 8 to 9 minutes to start on an H200 (compilation). The compiled
 code is cached in `/tmp`; with Singularity/Apptainer, bind a real folder there (`-B <folder>:/tmp`), since its default

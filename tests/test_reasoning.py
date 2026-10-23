@@ -341,3 +341,10 @@ def test_vllm_engine_writes_the_reasoning(tiny, monkeypatch):
     assert model.decider.reasoner.served == [1, 3]
     with pytest.raises(ValueError, match="reasoning_engine"):
         load(folder, reasoning=True, reasoning_engine="tgi")
+
+
+def test_vllm_engine_without_vllm_says_how_to_install(monkeypatch):
+    import sys
+    monkeypatch.setitem(sys.modules, "vllm", None)          # import vllm fails
+    with pytest.raises(ImportError, match="pip install"):
+        R.VLLMGenerator("base-x", None, "tok", 100, 0.4)

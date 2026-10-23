@@ -164,7 +164,10 @@ class VLLMGenerator:
     reasoning comes from exactly the base model, not from the released weights minus the adapter."""
 
     def __init__(self, base: str, revision: str | None, tokenizer: str, max_len: int, memory: float):
-        from vllm import LLM
+        try:
+            from vllm import LLM
+        except ImportError as e:
+            raise ImportError("--reasoning-engine vllm needs vLLM: pip install \".[vllm]\" (vllm==0.30.0)") from e
         kwargs = dict(model=base, revision=revision, tokenizer=tokenizer, dtype="bfloat16", max_model_len=max_len,
                       gpu_memory_utilization=memory, max_num_seqs=1, enable_prefix_caching=False, seed=0,
                       compilation_config={"cudagraph_capture_sizes": [1]})
