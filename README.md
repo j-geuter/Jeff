@@ -73,6 +73,23 @@ latency caps:
 jeff-serve jgeuter/Jeff-1.1-Large --revision REVISION-LARGE --reasoning on --jevbench-limits on --port 8013
 ```
 
+## Faster serving (optional)
+
+Three options make the server faster on large GPUs. They change the probabilities by numerical noise only (about 0.005
+on average, at most about 0.15 on single questions; the same size as changing how the input is padded), and we measured
+the released scores with them as well (see the model cards).
+
+- `--compile`: compiles the decision forward pass with `torch.compile`. On an H200, the median time per decision drops
+  from 60 to 43 ms for Jeff-1.1-Large and from 32 to 19 ms for Jeff-1.1-Medium. Startup takes a few minutes longer.
+- `--fast-reasoning` (with `--reasoning on`): the base model that writes the reasoning is kept as a second copy of the
+  weights, and generation uses a static KV cache, which transformers compiles. Jeff-1.1-Large then writes about 35
+  tokens per second instead of 15 (28 instead of 69 ms per token on an H200). It needs the model's memory twice (an H200
+  for the 31B and 27B models); without enough free memory the server falls back to the default. The compilation runs at
+  startup (several minutes).
+- For the Qwen models, `pip install flash-linear-attention==0.5.2`: transformers then runs the linear-attention layers
+  with these kernels instead of its PyTorch fallback (Jeff-1.1-Qwen-27B: 93 to 61 ms per decision, 53 ms with
+  `--compile`).
+
 ## Run without Docker
 
 ```bash
