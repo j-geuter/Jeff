@@ -278,3 +278,19 @@ def test_unsupported_attention_mode_is_refused(tmp_path):
     (tmp_path / "jeff_config.json").write_text(json.dumps({"name": "x", "bidirectional": "sideways"}))
     with pytest.raises(ValueError, match="bidirectional"):
         JeffModel(tmp_path, device="cpu")
+
+
+def test_compiled_forward_gives_the_same_answers(tiny, monkeypatch):
+    """--compile swaps in a compiled decision forward pass (here traced with the eager backend, so no C++ compiler is
+    needed); the answers stay the same and the warm-up covers several input lengths."""
+    folder, _ = tiny("gemma", "full")
+    model = load(folder)
+    row = model.row(STATE, REQUEST["route"], "route")
+    want = model.decider.decide(row)[0]
+    calls = []
+    real = torch.compile
+    monkeypatch.setattr(torch, "compile", lambda module, **kw: calls.append(kw) or real(module, backend="eager", **kw))
+    fast = load(folder, compile=True)
+    assert calls == [{"dynamic": True}] and fast.decider.forward is not fast.decider.base
+    fast.warmup()
+    assert fast.decider.decide(row)[0] == pytest.approx(want, abs=1e-5)

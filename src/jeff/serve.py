@@ -103,6 +103,9 @@ def main() -> None:
                         help="return the calibrated P(yes) for yes/no questions instead of committing answers between "
                              "0.2 and 0.8 to 0.199 / 0.801 (the commitment is on by default; JevBench counts answers "
                              "in that band as wrong)")
+    parser.add_argument("--compile", action="store_true",
+                        help="compile the decision forward pass with torch.compile: about 30-40%% faster per decision "
+                             "on an H200, numerically slightly different; startup takes a few minutes longer")
     parser.add_argument("--long-input", choices=("filter", "refuse"), default="filter",
                         help="inputs over the model's limit: keep their question-relevant parts (default) or refuse "
                              "them with HTTP 422")
@@ -127,7 +130,7 @@ def main() -> None:
     model = JeffModel(args.model, revision=args.revision, commit=not args.no_commit, long_input=args.long_input,
                       reasoning=args.reasoning, jevbench_limits=args.jevbench_limits, think_share=args.think_share,
                       think_budget=args.think_budget, max_output_per_decision=args.max_output_per_decision,
-                      request_seconds=args.request_seconds)
+                      request_seconds=args.request_seconds, compile=args.compile)
     model.warmup()
     gpu = torch.cuda.get_device_name(0) if torch.cuda.is_available() else "cpu"
     reasoning = model.reasoning and {k: model.reasoning[k] for k in (
@@ -136,7 +139,7 @@ def main() -> None:
           f"serving rule {model.rule}; reasoning {reasoning or 'off'}", flush=True)
     meta = {"model": model.name, "gpu": gpu, "dtype": "bfloat16", "readout": "decision head",
             "probability_origin": "softmax over the options + serving rule", "serving_rule": model.rule,
-            "bidirectional": model.config.get("bidirectional"), "long_input": args.long_input,
+            "bidirectional": model.config.get("bidirectional"), "long_input": args.long_input, "compile": args.compile,
             "reasoning": reasoning or None,
             "torch": torch.__version__, "cudnn_attention": torch.backends.cuda.cudnn_sdp_enabled()}
     httpd = HTTPServer((args.host, args.port), make_handler(model, meta))
