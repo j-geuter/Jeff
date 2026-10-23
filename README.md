@@ -90,6 +90,10 @@ the released scores with them as well (see the model cards).
   with these kernels instead of its PyTorch fallback (Jeff-1.1-Qwen-27B: 93 to 61 ms per decision, 53 ms with
   `--compile`). Use it together with `--compile`: without it, compiling the Qwen models takes hours.
 
+With `--compile --fast-reasoning`, the server needs about 8 to 9 minutes to start on an H200 (compilation). The compiled
+code is cached in `/tmp`; with Singularity/Apptainer, bind a real folder there (`-B <folder>:/tmp`), since its default
+`/tmp` is too small.
+
 ## Run without Docker
 
 ```bash
