@@ -278,6 +278,14 @@ class JeffModel:
             if self.decider.forward is not self.decider.base:
                 for words in (60, 600, 1500):
                     self.decider.decide({**WARMUP, "state": "The sky is blue. " * words})
+            if reasoner is not None and reasoner.static_cache:
+                # --fast-reasoning: transformers compiles the decoding steps on first use (minutes for the 31B, and
+                # again for the next input lengths); do it now, on inputs of several lengths, not on the first requests
+                for words in (5, 120, 600):
+                    ids = encode_prompt(self.decider.tokenizer, {**WARMUP, "state": "The sky is blue. " * words},
+                                        self.decider.max_tokens)
+                    with self.decider._torch.inference_mode():
+                        reasoner.think(ids, 2, "noul", [0.0, 0.0])
         finally:
             self.decider.reasoner = reasoner
 
