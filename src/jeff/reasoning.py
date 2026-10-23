@@ -182,9 +182,10 @@ class VLLMGenerator:
         return list(out[0].outputs[0].token_ids)
 
 
-def vllm_memory(folder: Path, spare_bytes: int = 6 << 30) -> float:
+def vllm_memory(folder: Path, spare_bytes: int = 12 << 30) -> float:
     """vLLM's share of the GPU memory: the base model's weights (as large as the released ones) plus spare_bytes for
-    the KV cache, activations and the CUDA graph."""
+    the KV cache of one full-length sequence (vLLM reserves it at start: 7.4 GB for the 31B), activations and the CUDA
+    graph."""
     import torch
     weights = sum(f.stat().st_size for f in Path(folder).glob("model*.safetensors"))
     total = torch.cuda.mem_get_info()[1]

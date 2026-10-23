@@ -123,7 +123,7 @@ def main() -> None:
                             "GPU (pip install vllm==0.30.0; about 2x faster generation; the GPU must hold the model "
                             "twice, e.g. an H200 for the 31B)")
     group.add_argument("--vllm-memory", type=float, default=None,
-                       help="vLLM's share of the GPU memory (default: the base model's size plus 6 GB)")
+                       help="vLLM's share of the GPU memory (default: the base model's size plus 12 GB)")
     group.add_argument("--vllm-base", default=None,
                        help="the base model for vLLM (repo id or folder; default: jeff_config.json's base model)")
     group.add_argument("--think-share", type=think_share, default=None,
