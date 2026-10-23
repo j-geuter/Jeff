@@ -89,34 +89,42 @@ class Batcher:
             return False
 
     def _next(self, block: bool) -> Job | None:
-        if self.backlog:
-            return self.backlog.popleft()
         try:
             return self.jobs.get(block=block)
         except queue.Empty:
             return None
 
     def _take(self) -> list[Job]:
-        """The next batch: waiting questions in arrival order, while batch size x longest input stays under the cap."""
-        batch, width = [], 0
-        while len(batch) < self.max_batch:
-            job = self._next(block=not batch)
-            if job is None:
+        """The next batch. All waiting questions are taken and sorted by length; a batch holds questions of similar
+        length (padding wastes compute: the batch costs batch size x longest input), up to max_batch questions and
+        max_tokens padded tokens. The rest wait in the backlog, which is answered before new questions are taken."""
+        if not self.backlog:
+            waiting = [self._next(block=True)]
+            while True:
+                job = self._next(block=False)
+                if job is None:
+                    break
+                waiting.append(job)
+            ready = [job for job in waiting if self._ready(job)]
+            self.backlog.extend(sorted(ready, key=lambda job: len(job.ids)))
+            if not self.backlog:
+                return []
+        batch, width, real = [], 0, 0
+        while self.backlog and len(batch) < self.max_batch:
+            job = self.backlog[0]
+            wider, more = max(width, len(job.ids)), real + len(job.ids)
+            if batch and (wider * (len(batch) + 1) > self.max_tokens or wider * (len(batch) + 1) > max(1.25 * more, more + 256)):
                 break
-            if not self._ready(job):
-                continue
-            wider = max(width, len(job.ids))
-            if batch and wider * (len(batch) + 1) > self.max_tokens:
-                self.backlog.appendleft(job)
-                break
-            batch.append(job)
-            width = wider
+            batch.append(self.backlog.popleft())
+            width, real = wider, more
         return batch
 
     def _work(self) -> None:
         torch = self.decider._torch
         while True:
             batch = self._take()
+            if not batch:
+                continue
             try:
                 with torch.inference_mode():
                     start = time.perf_counter()
