@@ -15,6 +15,8 @@ dependencies = ["torch>=2.11", "transformers>=5.17", "safetensors>=0.5", "huggin
 
 [project.optional-dependencies]
 test = ["pytest>=7"]
+vllm = ["vllm==0.30.0"]                              # --reasoning-engine vllm
+qwen-kernels = ["flash-linear-attention==0.5.2"]     # faster linear-attention layers of the Qwen models
 
 [project.scripts]
 jeff-serve = "jeff.serve:main"

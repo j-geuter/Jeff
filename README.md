@@ -90,6 +90,13 @@ the released scores with them as well (see the model cards).
   with these kernels instead of its PyTorch fallback (Jeff-1.1-Qwen-27B: 93 to 61 ms per decision, 53 ms with
   `--compile`). Use it together with `--compile`: without it, compiling the Qwen models takes hours.
 
+- `--reasoning-engine vllm` (with `--reasoning on`; `pip install ".[vllm]"`, or the Docker image built with
+  `--build-arg EXTRAS="vllm==0.30.0"`): the original base model, run by vLLM on the same GPU, writes the reasoning; the
+  decisions stay in this server. vLLM starts first and takes the base model's size plus 12 GB of the GPU memory
+  (`--vllm-memory` to change it); the GPU must hold the model twice (an H200 for the 31B and 27B models). On an H200,
+  Jeff-1.1-Large writes about 53 tokens per second (19 ms per token, against 69 by default and 31 with
+  `--fast-reasoning`). `--vllm-base` sets the base model (repo id or folder; default: the one in `jeff_config.json`).
+
 With `--compile --fast-reasoning`, the server needs about 8 to 9 minutes to start on an H200 (compilation). The compiled
 code is cached in `/tmp`; with Singularity/Apptainer, bind a real folder there (`-B <folder>:/tmp`), since its default
 `/tmp` is too small.

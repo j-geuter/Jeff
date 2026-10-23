@@ -9,6 +9,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends gcc libc6-dev &
 COPY requirements.txt pyproject.toml README.md LICENSE NOTICE ./
 COPY src ./src
 RUN pip install -r requirements.txt && pip install --no-deps .
+# Optional extras, e.g. --build-arg EXTRAS="vllm==0.30.0 flash-linear-attention==0.5.2" for --reasoning-engine vllm and
+# the Qwen kernels (see the README). The default image has neither.
+ARG EXTRAS=""
+RUN if [ -n "$EXTRAS" ]; then pip install $EXTRAS; fi
+ENV VLLM_NO_USAGE_STATS=1 VLLM_USE_FLASHINFER_SAMPLER=0 VLLM_USE_DEEP_GEMM=0
 EXPOSE 8013
 # Default: serve a model folder mounted at /model (weights fetched beforehand; works offline).
 # Or pass a Hugging Face repo id instead of /model (then the container needs network access).
