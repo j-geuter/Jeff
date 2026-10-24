@@ -124,7 +124,6 @@ def main() -> None:
     parser.add_argument("--commit", type=on_off, default=False, metavar="on|off",
                         help="move yes/no answers between 0.2 and 0.8 to 0.199 / 0.801, as in our JevBench submission "
                              "(JevBench counts answers in that band as wrong); default off: the calibrated P(yes)")
-    parser.add_argument("--no-commit", action="store_true", help=argparse.SUPPRESS)   # old commands: off is the default
     parser.add_argument("--compile", action="store_true",
                         help="compile the decision forward pass with torch.compile: about 30-40%% faster per decision "
                              "on an H200, numerically slightly different; startup takes a few minutes longer")
