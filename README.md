@@ -227,9 +227,11 @@ POST /v1/systemone
  "model": "Jeff-1.1-Large", "usage": {"input_tokens": 612, "output_tokens": 0}, "runtime": {...}}
 ```
 
-Each question is one forward pass (plus a reasoning, if it is on and the question is unsure); questions of one request
-are answered one after another. Invalid requests (and, with `--long-input refuse`, inputs over 8,192 tokens) get HTTP
-422; a failure during the forward pass (for example, out of GPU memory) gets HTTP 500. Both come with
+Each question is one forward pass (plus a reasoning, if it is on and the question is unsure); the questions of one
+request are batched together (one after another with `--batching off`). Instructions and option descriptions that are
+not text (objects, lists) are sent to the model as JSON text; an empty state as "(no state was given)". Invalid
+requests (and, with `--long-input refuse`, inputs over 8,192 tokens, with a message naming the maximum context length)
+get HTTP 422; a failure during the forward pass (for example, out of GPU memory) gets HTTP 500. Both come with
 `{"error": "..."}`.
 
 Yes/no answers: JevBench counts $0.2 < P(\text{yes}) < 0.8$ as wrong, so by default the server commits such answers to

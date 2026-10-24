@@ -68,3 +68,18 @@ def test_commitment(p, committed):
 def test_empty_rule_changes_nothing():
     probs = {"a": 0.25, "b": 0.75}
     assert T.apply_rule("choice", probs, {}) == probs
+
+
+def test_structured_or_missing_instructions_become_text():
+    q = {"type": "choice", "criteria": {"yes": "Relevant.", "no": "Not relevant."}}
+    row = T.question_row({"query": "x"}, {**q, "instructions": {"candidate": "tool A", "note": "ü"}})
+    assert row["question"] == '{"candidate": "tool A", "note": "ü"}'
+    assert T.question_row("s", {**q, "instructions": ""})["question"] == "(no instructions were given)"
+    assert T.question_row("s", {**q, "instructions": "Pick one."})["question"] == "Pick one."
+
+
+def test_structured_option_descriptions_become_json_text():
+    q = {"type": "choice", "instructions": "Which?", "criteria": {"A": ["#8c8379", "#a69576"], "b3c3": {"uci": "b3c3"},
+                                                                 "x": "", "y": "plain"}}
+    descriptions = [o["description"] for o in T.question_options(q)]
+    assert descriptions == ['A: ["#8c8379", "#a69576"]', 'b3c3: {"uci": "b3c3"}', "x: x", "y: plain"]

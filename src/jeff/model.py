@@ -8,8 +8,8 @@ serving rule is applied to the softmax. This computes exactly what we evaluated 
 
 Since 1.2 (all models):
 - inputs over the model's limit (8,192 tokens) keep their question-relevant parts instead of being refused, and states
-  the prompt format cannot hold (empty, a bare number) are sent as text (jeff.longinput; long_input="refuse" turns
-  both off);
+  the prompt format cannot hold (empty, a bare number) are sent as text (jeff.longinput; long_input="refuse" refuses
+  long inputs instead; since 1.3 it still sends such states as text);
 - questions with more than 16 options (up to 256) are answered in groups of 16 and a final round between the group
   winners (Decider.decide_wide).
 Jeff 1.1 models also have
@@ -183,8 +183,7 @@ class Decider:
         prompt cannot hold sent as text (long_input "filter")."""
         if self.reasoner is not None and row.get("qtype") not in ("choice", "noul", "score"):
             raise ValueError("reasoning needs the question type in the row (qtype: choice, noul or score)")
-        if self.long_input == "filter":
-            row = plain_state(row)
+        row = plain_state(row)                    # in both modes: an empty or numeric state is sent as text
         try:
             return row, encode_prompt(self.tokenizer, row, self.max_tokens), False
         except ValueError as error:

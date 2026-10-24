@@ -10,33 +10,50 @@
 
 from __future__ import annotations
 
+import json
 import math
 
 NOUL_YES, NOUL_NO = 0.80, 0.20      # JevBench's yes/no band
 BAND_YES, BAND_NO = 0.801, 0.199    # where a committed answer moves to
 
 
+def _text(value) -> str:
+    """An option description as text: strings as they are, structured values (objects, lists, numbers) as JSON."""
+    return value if isinstance(value, str) else json.dumps(value, ensure_ascii=False)
+
+
 def question_options(question: dict) -> list[dict]:
-    """Options of one TypeSafe question, as JevBench's semif_direct adapter builds them."""
+    """Options of one TypeSafe question, as JevBench's semif_direct adapter builds them (descriptions that are not
+    strings, e.g. lists of colors or move objects, as JSON text)."""
     qtype, criteria = question["type"], question.get("criteria")
     if qtype == "noul":
-        options = [{"id": key, "description": (criteria or {}).get(key, f"The proposition is {key}.")}
+        options = [{"id": key, "description": _text((criteria or {}).get(key, f"The proposition is {key}."))}
                    for key in ("true", "false")]
     elif qtype == "choice":
         if isinstance(criteria, dict):
-            options = [{"id": key, "description": value or key} for key, value in criteria.items()]
+            options = [{"id": key, "description": _text(value) if value not in (None, "", [], {}) else key}
+                       for key, value in criteria.items()]
         else:  # a bare list of option ids
             options = [{"id": str(key), "description": str(key)} for key in criteria]
     elif qtype == "score":
-        options = [{"id": str(i), "description": level} for i, level in enumerate(criteria)]
+        options = [{"id": str(i), "description": _text(level)} for i, level in enumerate(criteria)]
     else:
         raise ValueError(f"unknown question type {qtype!r}")
     return [{"id": o["id"], "description": o["id"] + ": " + o["description"]} for o in options]
 
 
+def question_text(instructions) -> str:
+    """The question's instructions as text: structured instructions (an object or array) as JSON, none as a note."""
+    if isinstance(instructions, str) and instructions:
+        return instructions
+    if instructions is None or instructions == "" or instructions == {} or instructions == []:
+        return "(no instructions were given)"
+    return json.dumps(instructions, ensure_ascii=False)
+
+
 def question_row(state, question: dict, row_id: str = "jevbench") -> dict:
     """One decision row (prompting.messages input) for a TypeSafe question."""
-    return {"id": row_id, "state": state, "question": question["instructions"],
+    return {"id": row_id, "state": state, "question": question_text(question["instructions"]),
             "options": question_options(question), "qtype": question["type"]}
 
 

@@ -21,8 +21,8 @@ If no unit mentions the question, or the prompt still does not fit, the state is
 start. If the question and its options alone do not fit, their texts are shortened too. So a request is never refused
 for its length.
 
-plain_state() is part of the same mode: a state the prompt format would refuse (empty, a number, NaN inside) is sent
-as text, so that every question gets an answer.
+plain_state() applies in both modes (since 1.3): a state the prompt format would refuse (empty, a number, NaN inside)
+is sent as text, so that every question gets an answer.
 """
 from __future__ import annotations
 
