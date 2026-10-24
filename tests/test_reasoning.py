@@ -247,8 +247,10 @@ def test_long_and_empty_inputs_are_filtered_or_refused(tiny):
     strict = load(folder, long_input="refuse")
     with pytest.raises(ValueError, match="exceed limit .*maximum context length"):
         strict.decide("\n".join(lines), {"q": question})
+    wide = {"type": "choice", "instructions": "Which code?", "criteria": {f"c{i}": f"code {i}" for i in range(20)}}
     for empty in ("", {}, []):                       # refuse mode still sends empty states as text (since 1.3)
         assert strict.decide(empty, {"q": question})["q"]["choice"] in ("bo", "al")
+        assert strict.decide(empty, {"w": wide})["w"]["choice"] in wide["criteria"]     # also with > 16 options
 
 
 def test_server_reports_output_tokens(tiny):

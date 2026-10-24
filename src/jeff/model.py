@@ -157,6 +157,7 @@ class Decider:
         """More options than the head has slots (JevBench allows up to 255): score the options in groups of at most 16
         (as equal in size as possible, so none has a single option), then the group winners against each other; an option's probability is P(its group's winner wins the final) x P(it
         within its group). Sums to 1. These questions do not reason."""
+        row = plain_state(row)                    # an empty or numeric state as text, as in prepare()
         validate_row(row, MAX_WIDE)
         options = row["options"]
         groups = split_groups(len(options), MAX_OPTIONS)
