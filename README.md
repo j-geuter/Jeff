@@ -74,7 +74,7 @@ Limits on reasoning (none by default; each is optional):
 - `--request-seconds T`: no new reasoning once a request has taken T seconds.
 
 `--jevbench-limits on` sets the values we evaluate JevBench with (Jeff-1.1-Large: 35 tokens, 45%, 30 s). Our JevBench
-submission (reasoning on, these limits, reasoning written by transformers, no batching) is the separate repository
+submission (reasoning on, these limits, reasoning written by transformers, no batching, yes/no commit on) is the separate repository
 [Jeff-JevBench](https://github.com/j-geuter/Jeff-JevBench), which pins the release we tested (v1.2.0).
 
 What writes the reasoning (`--reasoning-engine`):
@@ -134,11 +134,12 @@ one request at a time, batching changes nothing: on 500 OpenDecisions questions,
 identical to those of `--batching off`. When questions share a batch (several requests at once, or several questions
 in one request), their inputs are padded to the same length and the probabilities change by numerical noise. With 8
 clients sending OpenDecisions questions at once to Jeff-1.1-Large, a question's probabilities changed by 0.004 on
-average (99% of questions: under 0.045, at most 0.125), and 6 of 2,389 yes/no answers near P(yes) = 0.5 moved to the
-other side of the 0.2-0.8 band. With vLLM writing the reasoning, reasonings that run together can also come out with
+average (99% of questions: under 0.045, at most 0.125), and with `--commit on`, 6 of 2,389 yes/no answers near
+P(yes) = 0.5 flipped between 0.199 and 0.801. With vLLM writing the reasoning, reasonings that run together can also come out with
 different words than alone (vLLM's batched kernels round differently), so the answer of a single question that
 reasons can change a lot; over OpenDecisions, Capability with 8 clients stayed within 0.6 points of one request at a
-time for all four models. Use `--batching off` to reproduce our numbers exactly.
+time for all four models. Our numbers also have the yes/no commit on (see
+[Request/response format](#requestresponse-format)): use `--batching off --commit on` to reproduce them exactly.
 
 Speed: batching raises throughput most for the smaller models and for reasoning. A forward pass of Jeff-1.1-Large on a
 typical question (300 tokens) already keeps an H200 busy, so batching its one-pass answers adds little. With 8 clients
@@ -222,7 +223,7 @@ POST /v1/systemone
                 "criteria": ["trivial", "minor", "moderate", "serious", "critical"]}}}
 ->
 {"answers": {"route":    {"type": "choice", "choice": "billing", "probabilities": {"billing": 0.97, "technical": 0.03}},
-             "urgent":   {"type": "noul", "noul": 0.801},
+             "urgent":   {"type": "noul", "noul": 0.64},
              "severity": {"type": "score", "score": 2, "probabilities": {"0": 0.01, "1": 0.2, ...}}},
  "model": "Jeff-1.1-Large", "usage": {"input_tokens": 612, "output_tokens": 0}, "runtime": {...}}
 ```
@@ -234,16 +235,16 @@ requests (and, with `--long-input refuse`, inputs over 8,192 tokens, with a mess
 get HTTP 422; a failure during the forward pass (for example, out of GPU memory) gets HTTP 500. Both come with
 `{"error": "..."}`.
 
-Yes/no answers: JevBench counts $0.2 < P(\text{yes}) < 0.8$ as wrong, so by default the server commits such answers to
-0.199 or 0.801 (whichever edge is nearer, as `"urgent"` above). Start it with `--no-commit` (Python: `commit=False`) to get
-the calibrated $P(\text{yes})$ instead.
+Yes/no answers: `noul` is the calibrated $P(\text{yes})$. JevBench counts $0.2 < P(\text{yes}) < 0.8$ as wrong; with
+`--commit on` (Python: `commit=True`) the server moves such answers to 0.199 or 0.801 (whichever edge is nearer), as in
+our JevBench submission.
 
 ## Python
 
 ```python
 from jeff import JeffModel
-model = JeffModel("jgeuter/Jeff-1.1-Large")      # or a local folder with the weights; commit=False: calibrated P(yes)
-# reasoning=True, jevbench_limits=True, think_share=0.3, think_budget=256, long_input="refuse": as the server options
+model = JeffModel("jgeuter/Jeff-1.1-Large")      # or a local folder with the weights
+# reasoning=True, jevbench_limits=True, commit=True, think_share=0.3, think_budget=256, long_input="refuse": as the server options
 model.decide({"ticket": "Refund not received after 14 days"},
              {"route": {"type": "choice", "instructions": "Which team should handle this?",
                         "criteria": {"billing": "Payments and refunds", "tech": "Technical problems"}}})

@@ -24,6 +24,12 @@ def test_rule_commits_yes_no_answers():
     assert served_answer("noul", ["true", "false"], [0.6, 0.4], no_commit)["noul"] == pytest.approx(0.6)
 
 
+def test_yes_no_commit_is_off_by_default(tiny):
+    folder, _ = tiny("gemma", reasoning=False)
+    assert "noul_edge" not in JeffModel(folder, device="cpu").rule
+    assert JeffModel(folder, device="cpu", commit=True).rule["noul_edge"] == 0.0
+
+
 def test_rule_tempers_choices():
     out = served_answer("choice", ["a", "b"], [0.2, 0.8], RULE)
     assert out["choice"] == "b" and 0.2 < out["probabilities"]["a"] < 0.5

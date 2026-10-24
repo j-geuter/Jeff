@@ -9,7 +9,7 @@ gets a short reasoning:
 2. the decision model (the released weights) reads the prompt, the reasoning and "\\n\\nFinal answer:", and the answer
    is read from its letter logits at that position (the LM's logits of the option letters, bare and with a space);
 3. that distribution is pooled with the one-pass answer (mean of the log-probabilities) and calibrated with its own
-   temperature per type. It replaces the one-pass answer; the yes/no commitment of the serving rule still applies.
+   temperature per type. It replaces the one-pass answer (with --commit on, the yes/no commitment still applies).
 The generated tokens are reported as output tokens.
 
 Which questions reason: for a think share s of a type, the threshold is the s-quantile of the calibrated one-pass

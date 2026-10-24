@@ -264,9 +264,9 @@ def served_answer(qtype: str, option_ids: list[str], probabilities: list[float],
 
 
 class JeffModel:
-    """commit (default True): the yes/no commitment of the released serving rule. JevBench counts a yes/no answer with
-    0.2 < P(yes) < 0.8 as wrong, so the rule moves such answers to just outside the nearer edge (0.801 or 0.199).
-    commit=False keeps the calibrated P(yes) (temperatures still apply).
+    """commit (default False): yes/no answers are the calibrated P(yes). JevBench counts a yes/no answer with
+    0.2 < P(yes) < 0.8 as wrong; commit=True moves such answers to just outside the nearer edge (0.801 or 0.199), as in
+    our JevBench submission (the serving rule's noul_edge).
 
     long_input: "filter" (default) or "refuse" (see the module docstring).
 
@@ -283,7 +283,7 @@ class JeffModel:
     once."""
 
     def __init__(self, ref: str | Path, revision: str | None = None, device: str = "cuda",
-                 rule: dict | None = None, cudnn_attention: bool = False, commit: bool = True,
+                 rule: dict | None = None, cudnn_attention: bool = False, commit: bool = False,
                  long_input: str = "filter", reasoning: bool = False, jevbench_limits: bool = False,
                  think_share: float | dict | None = None, think_budget: int | None = None,
                  max_output_per_decision: float | None = None, request_seconds: float | None = None,
