@@ -116,12 +116,12 @@ def test_bidirectional_models_read_both_ways_and_reason_causally(tiny):
 @pytest.mark.parametrize("kind,bidirectional", [("gemma", None), ("gemma", "full"), ("qwen", "full")])
 def test_reasoning_writes_reads_and_reports_tokens(tiny, kind, bidirectional):
     folder, _ = tiny(kind, bidirectional)
-    model = load(folder, reasoning=True, think_share=1.0, commit=True)
+    model = load(folder, reasoning=True, think_share=1.0)
     for key, question in REQUEST.items():
         answer = model.decide(STATE, {key: question})[key]
         assert model.decider.last["thought"] and 0 <= model.decider.last["output_tokens"] <= 4
         if question["type"] == "noul":
-            assert not 0.2 < answer["noul"] < 0.8        # the yes/no commitment (commit=True) still applies
+            assert not 0.2 < answer["noul"] < 0.8        # the yes/no commitment still applies
         else:
             assert sum(answer["probabilities"].values()) == pytest.approx(1.0, abs=1e-6)
     assert model.decider.reasoner.served[0] == 3

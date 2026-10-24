@@ -8,8 +8,8 @@ Answers: choice -> {"type": "choice", "choice": best option, "probabilities": {.
 "noul": P(yes)}; score -> {"type": "score", "score": best level, "probabilities": {...}}. Requests that arrive together
 are answered in batches (jeff.batching; --batching off: one request at a time, its questions one after another).
 Invalid requests get HTTP 422; a failure in the forward pass (e.g. out of GPU memory) gets HTTP 500. Both come with
-{"error": message}. Yes/no answers are the calibrated P(yes); --commit on moves answers between 0.2 and 0.8 to 0.199 /
-0.801 (JevBench counts that band as wrong).
+{"error": message}. Yes/no answers between 0.2 and 0.8 are committed to 0.199 / 0.801 (--commit off: the calibrated
+P(yes)).
 
 By default every question is one forward pass (output_tokens 0). Inputs over the model's limit (8,192 tokens) keep
 their question-relevant parts (--long-input refuse: HTTP 422 instead); questions with more than 16 options (up to
@@ -121,9 +121,9 @@ def main() -> None:
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8013)
     parser.add_argument("--ready-file", type=Path, default=None, help="written once the server listens")
-    parser.add_argument("--commit", type=on_off, default=False, metavar="on|off",
-                        help="move yes/no answers between 0.2 and 0.8 to 0.199 / 0.801, as in our JevBench submission "
-                             "(JevBench counts answers in that band as wrong); default off: the calibrated P(yes)")
+    parser.add_argument("--commit", type=on_off, default=True, metavar="on|off",
+                        help="move yes/no answers between 0.2 and 0.8 to 0.199 / 0.801 (default on; JevBench counts "
+                             "answers in that band as wrong); off: the calibrated P(yes)")
     parser.add_argument("--compile", action="store_true",
                         help="compile the decision forward pass with torch.compile: about 30-40%% faster per decision "
                              "on an H200, numerically slightly different; startup takes a few minutes longer")
