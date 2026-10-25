@@ -64,12 +64,13 @@ Limits on reasoning (optional):
 - `--decision-seconds S`: every question is answered within about S seconds of its request's arrival. The reasoning
   stops when it could not be read in time anymore, and the question then keeps its one-pass answer (the tokens it
   wrote still count as output). On a slower GPU, fewer reasonings finish, but no answer comes late. With the vLLM
-  engine this limit is approximate.
+  engine this limit is approximate. `--read-partial on`: the model reads what the stopped reasoning wrote so far
+  (followed by "Final answer:") instead of dropping it.
 
 `--jevbench-limits on` sets the limits we use on JevBench (see `reasoning.json`), with `--decision-seconds 8.5` (JevBench
 counts a decision that takes more than 10 s as failed). `--reasoning-config FILE` replaces the model's reasoning
-settings with the ones in a JSON file (keys `budget`, `read`, `mix`, `temperatures`, `share`, `jevbench_limits`), e.g.
-settings chosen for a deployment.
+settings with the ones in a JSON file (keys `budget`, `read`, `mix`, `temperatures`, `share`, `jevbench_limits`,
+`read_partial`), e.g. settings chosen for a deployment.
 
 The reasoning engine (`--reasoning-engine`) can be set to the following values:
 
@@ -88,11 +89,15 @@ Note that vLLM rounds differently, so the reasoning text can differ slightly.
 These options make the server faster on large GPUs.
 
 - `--compile`: compiles the decision forward pass with `torch.compile`. Startup takes a few minutes longer.
-- `--fast-reasoning` (with `--reasoning on`): the base model that writes the reasoning is kept as a second copy of the
-  weights, and generation uses a static KV cache, which transformers compiles. Jeff-1.1-Large then writes about 35
-  tokens per second instead of 15 (on an H200). It needs the model's memory twice (e.g. an H200
-  for the 31B and 27B models); without enough free memory the server falls back to the default. Compiles at
-  startup (several minutes).
+- `--fast-reasoning MODE` (with `--reasoning on` and the transformers engine): generation uses a static KV cache,
+  and transformers compiles the decoding step at startup (several minutes). `copy` (the default when no mode is
+  given): the base model that writes the reasoning is kept as a second copy of the weights; it needs the model's
+  memory twice (e.g. an H200 for the 31B and 27B models), and without room for it the server uses the hooks,
+  uncompiled. `shared`: no copy; the hooks that remove the adapter run inside the compiled step (about 3 GB more for
+  the 31B). `auto`: `copy` when there is room, else `shared`. Jeff-1.1-Large writes 31 tokens per second with
+  `copy` and 27 with `shared` instead of 15 (H200); on an H100, about 21 with `shared` instead of 13. The static cache
+  holds prompts up to 4,096 tokens (plus the budget), so nothing compiles while serving; longer prompts reason
+  uncompiled.
 - For Qwen models: `pip install flash-linear-attention==0.5.2`: transformers then runs the linear-attention layers
   with these kernels. Use it together with `--compile`.
 
