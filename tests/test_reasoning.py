@@ -242,9 +242,10 @@ def test_decision_seconds_with_time_to_spare_changes_nothing(tiny):
 
 
 def test_a_reasoning_cut_by_the_time_limit_is_dropped(tiny, monkeypatch):
-    """A generation the time limit stops is not read: the one-pass answer, with the written tokens counted."""
+    """read_partial off: a generation the time limit stops is not read: the one-pass answer, with the written tokens
+    counted."""
     folder, _ = tiny("gemma")
-    model = load(folder, reasoning=True, think_share=1.0, decision_seconds=600.0)
+    model = load(folder, reasoning=True, think_share=1.0, decision_seconds=600.0, read_partial=False)
     reasoner = model.decider.reasoner
     ids = encode_prompt(model.decider.tokenizer, model.row(STATE, REQUEST["route"], "route"), 8192)
     with torch.no_grad():
@@ -445,12 +446,16 @@ def test_fast_reasoning_uses_one_static_cache_size(tiny, monkeypatch):
 
 
 def test_read_partial_reads_a_reasoning_the_time_limit_cut(tiny, monkeypatch):
-    """read_partial: a reasoning stopped by the time limit is read as it stands (prompt, its tokens, "Final answer:"),
-    not dropped; without tokens there is nothing to read and the one pass stays."""
+    """read_partial (the default): a reasoning stopped by the time limit is read as it stands (prompt, its tokens,
+    "Final answer:"), not dropped; without tokens there is nothing to read and the one pass stays. A reasoning config
+    can turn it off, and the option overrides the config."""
     folder, _ = tiny("gemma")
-    model = load(folder, reasoning=True, think_share=1.0, decision_seconds=600.0, read_partial=True)
+    model = load(folder, reasoning=True, think_share=1.0, decision_seconds=600.0)
     reasoner = model.decider.reasoner
     assert model.reasoning["read_partial"] is True
+    assert load(folder, reasoning=True, reasoning_config={"read_partial": False}).reasoning["read_partial"] is False
+    assert load(folder, reasoning=True, reasoning_config={"read_partial": False},
+                read_partial=True).reasoning["read_partial"] is True
     ids = encode_prompt(model.decider.tokenizer, model.row(STATE, REQUEST["route"], "route"), 8192)
     with torch.no_grad():
         full, _ = reasoner.write([reasoner.prompt(ids)])[0]
@@ -471,7 +476,7 @@ def test_read_partial_reads_a_reasoning_the_time_limit_cut(tiny, monkeypatch):
     model.decide(STATE, {"route": REQUEST["route"]})
     assert model.decider.last["thought"] and not model.decider.last["dropped"]
     assert model.decider.last["output_tokens"] == 1
-    off = load(folder, reasoning=True, think_share=1.0, decision_seconds=1e-6, read_partial=True)
+    off = load(folder, reasoning=True, think_share=1.0, decision_seconds=1e-6)
     off.decide(STATE, {"route": REQUEST["route"]})               # no time to start: nothing written, nothing read
     assert off.decider.last["dropped"] and off.decider.last["output_tokens"] == 0
 

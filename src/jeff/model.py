@@ -282,7 +282,7 @@ class JeffModel:
     number, or {type: threshold}) sets confidence thresholds directly; max_output_per_decision, max_think_share,
     request_seconds and decision_seconds set those limits on their own; reasoning_config (a dict or JSON file) replaces
     reasoning.json's budget, read, pooling, temperatures, shares or JevBench limits (jeff.reasoning.read_config);
-    read_partial: read a reasoning cut by decision_seconds instead of dropping it (default: the config's, else off).
+    read_partial: read a reasoning cut by decision_seconds instead of dropping it (default: the config's, else on).
 
     reasoning_engine: what writes the reasoning. "transformers": this model, with the adapter removed by hooks (or a
     second weight copy, see fast_reasoning); "vllm": the base model in vLLM on the same GPU, rebuilt from this release

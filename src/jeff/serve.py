@@ -152,7 +152,7 @@ def main() -> None:
                             "copy when there is room, else shared"),
     group.add_argument("--read-partial", type=on_off, default=None, metavar="on|off",
                        help="read a reasoning that the time limit (--decision-seconds) cut, instead of dropping it "
-                            "(default: the reasoning settings' read_partial, else off)")
+                            "(default: the reasoning settings' read_partial, else on)")
     group.add_argument("--reasoning-engine", choices=("auto", "transformers", "vllm"), default="auto",
                        help="what writes the reasoning: the base model in vLLM on the same GPU (pip install "
                             "\".[vllm]\"; about 3.5x faster generation on the 31B, reasonings batched; the GPU must "

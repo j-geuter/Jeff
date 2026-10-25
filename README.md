@@ -121,16 +121,11 @@ Limits on reasoning (optional):
 - `--max-think-share S`: no new reasoning while more than a share S of the last 1,000 questions reasoned (after the
   first 100).
 - `--request-seconds T`: no new reasoning once a request has taken T seconds.
-- `--decision-seconds S`: every question is answered within about S seconds of its request's arrival. The reasoning
-  stops when it could not be read in time anymore, and the question then keeps its one-pass answer (the tokens it
-  wrote still count as output). On a slower GPU, fewer reasonings finish, but no answer comes late. With the vLLM
-  engine this limit is approximate. `--read-partial on`: the model reads what the stopped reasoning wrote so far
-  (followed by "Final answer:") instead of dropping it.
+- `--decision-seconds S`: every question is answered within about S seconds (approximate with vLLM). A reasoning
+  that runs out of time stops early and is read as it stands; `--read-partial off` drops it instead.
 
-`--jevbench-limits on` sets the limits we use on JevBench (see `reasoning.json`), with `--decision-seconds 8.5` (JevBench
-counts a decision that takes more than 10 s as failed). `--reasoning-config FILE` replaces the model's reasoning
-settings with the ones in a JSON file (keys `budget`, `read`, `mix`, `temperatures`, `share`, `jevbench_limits`,
-`read_partial`), e.g. settings chosen for a deployment.
+`--reasoning-config FILE` replaces the model's reasoning
+settings with the ones in a JSON file.
 
 The reasoning engine (`--reasoning-engine`) can be set to the following values:
 

@@ -29,10 +29,10 @@ within the board's cost and latency caps):
 - decision_seconds S (`--decision-seconds`): every question of a request is answered within about S seconds of the
   request's arrival. A question reasons only if its one pass leaves time; the generation stops when the next token and
   the read after it would end later than S (the read time is estimated from the measured prefill time), and such a
-  cut reasoning is dropped: the question keeps its one-pass answer (its generated tokens still count as output), or,
-  with read_partial (`--read-partial on`), it is read as it stands, as if it had ended at its budget. So a slower GPU
-  only means fewer finished (or shorter) reasonings. With the vLLM engine the limit is a token cap from the measured
-  speed, so it is approximate there.
+  cut reasoning is read as it stands, as if it had ended at its budget (read_partial, the default; with
+  `--read-partial off` it is dropped: the question keeps its one-pass answer, and its generated tokens still count as
+  output). So a slower GPU only means fewer finished (or shorter) reasonings. With the vLLM engine the limit is a token
+  cap from the measured speed, so it is approximate there.
 Without limits, every question below its threshold reasons.
 """
 from __future__ import annotations
@@ -139,7 +139,7 @@ def settings(folder, share=None, budget: int | None = None, jevbench_limits: boo
         out[key] = value if value is not None else default
     if out["decision_seconds"] is not None and float(out["decision_seconds"]) <= 0:
         raise ValueError("decision_seconds must be positive")
-    out["read_partial"] = bool(config.get("read_partial", False) if read_partial is None else read_partial)
+    out["read_partial"] = bool(config.get("read_partial", True) if read_partial is None else read_partial)
     return out
 
 
