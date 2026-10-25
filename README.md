@@ -36,96 +36,6 @@ slots; questions with more options (up to 256) are answered in groups of 16 and 
 winners. The model reads up to 8,192 tokens. Longer inputs are condensed to at most 8192 tokens; `--long-input refuse` refuses
 them instead.
 
-## Reasoning (Jeff 1.1)
-
-With `--reasoning on`, a question whose calibrated confidence is below a threshold gets a short reasoning
-before the answer:
-
-1. the base model (with LoRA off) writes up to 512 tokens (256 for Jeff-1.1-Qwen-4B) of reasoning;
-2. the decision model reads the prompt, the reasoning and "Final answer:", and makes a second prediction;
-3. that distribution is averaged with the one-pass answer (mean of the log-probabilities) and calibrated with its own temperature.
-
-By default, reasoning is off. If turned on, the share of questions that reasons was selected on held-out data (for Jeff-1.1-Large: 0% of choice questions, 20% of yes/no, and 60% of score
-questions; see `reasoning.json`). You can change this in two ways:
-
-- `--think-share 0.3` (or `--think-share choice=0.2,noul=0.3,score=0.6`): the thresholds at which this share of our
-  validation questions reasons, from 0 (never) to 1 (always);
-- `--think-threshold 0.8` (or `--think-threshold noul=0.8,score=0.7`): a question reasons when its calibrated
-  confidence (its largest probability) is below this value.
-
-Limits on reasoning (optional):
-
-- `--think-budget`: sets the maximum tokens per reasoning. The generated tokens are reported as `output_tokens`. Default 512 (256 for Jeff-1.1-Qwen-4B).
-- `--max-output-per-decision L`: the mean output tokens per question, over everything the server has answered, never
-  exceed L. A question reasons only if (output tokens so far + budget) / (questions so far + 1) is at most L;
-- `--max-think-share S`: no new reasoning while more than a share S of the last 1,000 questions reasoned (after the
-  first 100). Unlike `--think-share`, this is a hard cap on the questions this server actually receives;
-- `--request-seconds T`: no new reasoning once a request has taken T seconds;
-- `--decision-seconds S`: every question is answered within about S seconds of its request's arrival. The reasoning
-  stops when it could not be read in time anymore, and the question then keeps its one-pass answer (the tokens it
-  wrote still count as output). On a slower GPU, fewer reasonings finish, but no answer comes late. With the vLLM
-  engine this limit is approximate. `--read-partial on`: the model reads what the stopped reasoning wrote so far
-  (followed by "Final answer:") instead of dropping it.
-
-`--jevbench-limits on` sets the limits we use on JevBench (see `reasoning.json`), with `--decision-seconds 8.5` (JevBench
-counts a decision that takes more than 10 s as failed). `--reasoning-config FILE` replaces the model's reasoning
-settings with the ones in a JSON file (keys `budget`, `read`, `mix`, `temperatures`, `share`, `jevbench_limits`,
-`read_partial`), e.g. settings chosen for a deployment.
-
-The reasoning engine (`--reasoning-engine`) can be set to the following values:
-
-- `auto` (default): vLLM if it is installed (`pip install ".[vllm]"`) and the GPU can hold the model twice, otherwise
-  transformers;
-- `vllm`: the base model in vLLM, on the same GPU, while the merged model (base+LoRA) runs in `transformers`. The base model is written to `--cache-dir` (default `$JEFF_CACHE` or `~/.cache/jeff`) and reused at the next start. `--vllm-base` takes a base model folder or repo id instead. vLLM starts first
-  and takes the model's size plus 12 GB of GPU memory (`--vllm-memory` to change it). Note you need to fit both the base weights and merged weights in GPU memory;
-- `transformers`: no vLLM required. It needs no extra
-  memory, and writes about 15 tokens per second on the 31B (69 ms per token; `--fast-reasoning` keeps a second copy of
-  the base weights and gets 28 ms).
-
-Note that vLLM rounds differently, so the reasoning text can differ slightly.
-
-## Faster serving (optional)
-
-These options make the server faster on large GPUs.
-
-- `--compile`: compiles the decision forward pass with `torch.compile`. Startup takes a few minutes longer.
-- `--fast-reasoning MODE` (with `--reasoning on` and the transformers engine): generation uses a static KV cache,
-  and transformers compiles the decoding step at startup (several minutes). `copy` (the default when no mode is
-  given): the base model that writes the reasoning is kept as a second copy of the weights; it needs the model's
-  memory twice (e.g. an H200 for the 31B and 27B models), and without room for it the server uses the hooks,
-  uncompiled. `shared`: no copy; the hooks that remove the adapter run inside the compiled step (about 3 GB more for
-  the 31B). `auto`: `copy` when there is room, else `shared`. Jeff-1.1-Large writes 31 tokens per second with
-  `copy` and 27 with `shared` instead of 15 (H200); on an H100, about 21 with `shared` instead of 13. The static cache
-  holds prompts up to 4,096 tokens (plus the budget), so nothing compiles while serving; longer prompts reason
-  uncompiled.
-- For Qwen models: `pip install flash-linear-attention==0.5.2`: transformers then runs the linear-attention layers
-  with these kernels. Use it together with `--compile`.
-
-With `--compile --fast-reasoning`, the server needs about 8 to 9 minutes to start on an H200. The compiled
-code is cached in `/tmp`; with Singularity/Apptainer, bind a folder on a local disk there (`-B <folder>:/tmp`), since its
-default `/tmp` is too small (and vLLM fails to delete its temporary folders on NFS).
-
-## Batching
-
-Requests that arrive at the same time are answered together: the server sorts the waiting questions by length and runs
-questions of similar length in one forward pass (up to `--max-batch` questions, default 32). It never waits for more
-requests. With vLLM, waiting reasonings also run as one
-batch. `--batching off` answers one request at a time.
-
-- Memory: a batch holds at most `--max-batch-tokens` padded input tokens (questions x longest input). By default this
-  is set at start from the free GPU memory (about 300,000 tokens for Jeff-1.1-Large on an H200).
-- Reproducibility: Padding in batches can change the probabilities by numerical noise (0.004 on average with 8 clients), and vLLM can slightly change probabilities as well. On OpenDecisions, Capability with 8 clients stayed within 0.6 points of
-  one request at a time. Use `--batching off` to reproduce our numbers exactly.
-- Speed: batching helps most for the smaller models and for reasoning. Throughput with 8 clients on one H200, compared
-  with one request at a time:
-
-| Model | One pass | With reasoning (vLLM) |
-|---|---|---|
-| Jeff-1.1-Large | 1.3x | 2.2x |
-| Jeff-1.1-Qwen-27B | 1.5x | 1.8x |
-| Jeff-1.1-Medium | 1.7x | 2.5x |
-| Jeff-1.1-Qwen-4B | 2.5x | 1.5x |
-
 ## Run without Docker
 
 ```bash
@@ -170,6 +80,17 @@ The container reads the weights from `/model` and needs no network access (it al
 needs one GPU with enough memory (for the 31B and 27B models e.g. H100 80GB, or H200 when reasoning with vLLM); `--gpus` needs the [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/)
 on the host.
 
+## Python
+
+```python
+from jeff import JeffModel
+model = JeffModel("jgeuter/Jeff-1.1-Large")      # or a local folder with the weights; commit=False: calibrated P(yes)
+# reasoning=True, think_share=0.3, think_budget=256, long_input="refuse": as the server options
+model.decide({"ticket": "Refund not received after 14 days"},
+             {"route": {"type": "choice", "instructions": "Which team should handle this?",
+                        "criteria": {"billing": "Payments and refunds", "tech": "Technical problems"}}})
+```
+
 ## Requirements
 
 Tested with Python 3.12, torch 2.13.0 (CUDA 13.0), transformers 5.17.0 and accelerate 1.15.0 (`requirements.txt`).
@@ -177,6 +98,82 @@ Without Docker, the machine needs a C compiler (e.g. `gcc`; the image has one): 
 operations, compiles a small helper with it on the first request. The GPU driver must support CUDA 13.0 (R580 or
 newer). The Qwen models need nothing extra: without `flash-linear-attention` and `causal-conv1d`, transformers runs their
 linear-attention layers with a slower PyTorch implementation.
+
+## Reasoning (Jeff 1.1)
+
+With `--reasoning on`, a question whose calibrated confidence is below a threshold gets a short reasoning
+before the answer:
+
+1. the base model (with LoRA off) writes up to 512 tokens (256 for Jeff-1.1-Qwen-4B) of reasoning;
+2. the decision model reads the prompt, the reasoning and "Final answer:", and makes a second prediction;
+3. that distribution is averaged with the one-pass answer (mean of the log-probabilities) and calibrated with its own temperature.
+
+By default, reasoning is off. If turned on, you can set the share of questions that reasons in two ways:
+
+- `--think-share 0.3` (or `--think-share choice=0.2,noul=0.3,score=0.6`): the thresholds at which this share of questions reasons (measured on validation data), from 0 (never) to 1 (always);
+- `--think-threshold 0.8` (or `--think-threshold noul=0.8,score=0.7`): a question reasons when its calibrated
+  confidence is below this value.
+
+Limits on reasoning (optional):
+
+- `--think-budget`: sets the maximum tokens per reasoning. Default 512 (256 for Jeff-1.1-Qwen-4B).
+- `--max-output-per-decision L`: the mean output tokens per question, over everything the server has answered.
+- `--max-think-share S`: no new reasoning while more than a share S of the last 1,000 questions reasoned (after the
+  first 100).
+- `--request-seconds T`: no new reasoning once a request has taken T seconds.
+- `--decision-seconds S`: every question is answered within about S seconds of its request's arrival. The reasoning
+  stops when it could not be read in time anymore, and the question then keeps its one-pass answer (the tokens it
+  wrote still count as output). On a slower GPU, fewer reasonings finish, but no answer comes late. With the vLLM
+  engine this limit is approximate. `--read-partial on`: the model reads what the stopped reasoning wrote so far
+  (followed by "Final answer:") instead of dropping it.
+
+`--jevbench-limits on` sets the limits we use on JevBench (see `reasoning.json`), with `--decision-seconds 8.5` (JevBench
+counts a decision that takes more than 10 s as failed). `--reasoning-config FILE` replaces the model's reasoning
+settings with the ones in a JSON file (keys `budget`, `read`, `mix`, `temperatures`, `share`, `jevbench_limits`,
+`read_partial`), e.g. settings chosen for a deployment.
+
+The reasoning engine (`--reasoning-engine`) can be set to the following values:
+
+- `auto` (default): vLLM if it is installed (`pip install ".[vllm]"`) and the GPU can hold the model twice, otherwise
+  transformers;
+- `vllm`: the base model in vLLM, on the same GPU, while the merged model (base+LoRA) runs in `transformers`. `--vllm-base` takes a base model folder or repo id instead. Note you need to fit both the base weights and merged weights in GPU memory;
+- `transformers`: no vLLM required. It needs no extra
+  memory, and writes about 15 tokens per second on the 31B (69 ms per token; `--fast-reasoning` keeps a second copy of
+  the base weights and gets 28 ms).
+
+Note that vLLM rounds differently, so the reasoning text can differ slightly.
+
+## Faster serving (optional)
+
+These options make the server faster on large GPUs.
+
+- `--compile`: compiles the decision forward pass with `torch.compile`. Startup takes a few minutes longer.
+- `--fast-reasoning MODE` (with `--reasoning on`): generation uses a static KV cache, which transformers compiles at
+  startup. `copy` (the default when no mode is given): the base model that writes the reasoning is kept as a second
+  copy of the weights. Roughly doubles reasoning throughput, while also doubling memory. `shared`: no second copy (a
+  few GB more memory), somewhat slower than `copy`. `auto`: `copy` when there is room, else `shared`. Prompts over
+  4,096 tokens reason uncompiled, so nothing compiles while serving.
+- For Qwen models: `pip install flash-linear-attention==0.5.2`: transformers then runs the linear-attention layers
+  with these kernels. Use it together with `--compile`.
+  
+
+## Batching
+
+Requests that arrive at the same time are answered together (up to `--max-batch` questions, default 32). With vLLM, waiting reasonings also run as one
+batch. `--batching off` answers one request at a time.
+
+- Memory: a batch holds at most `--max-batch-tokens` padded input tokens (questions x longest input). By default this
+  is set at start from the free GPU memory (about 300,000 tokens for Jeff-1.1-Large on an H200).
+- Reproducibility: Padding in batches can change the probabilities by numerical noise (0.004 on average with 8 clients), and vLLM can slightly change probabilities as well. Use `--batching off` to reproduce our numbers exactly.
+- Speed: batching helps most for the smaller models and for reasoning. Throughput with 8 clients on one H200, compared
+  with one request at a time:
+
+| Model | One pass | With reasoning (vLLM) |
+|---|---|---|
+| Jeff-1.1-Large | 1.3x | 2.2x |
+| Jeff-1.1-Qwen-27B | 1.5x | 1.8x |
+| Jeff-1.1-Medium | 1.7x | 2.5x |
+| Jeff-1.1-Qwen-4B | 2.5x | 1.5x |
 
 ## Request/response format
 
@@ -208,17 +205,6 @@ get HTTP 422; a failure during the forward pass (for example, out of GPU memory)
 Yes/no answers: JevBench counts $0.2 < P(\text{yes}) < 0.8$ as wrong, so by default the server commits such answers to
 0.199 or 0.801 (whichever edge is nearer, as `"urgent"` above). Start it with `--commit off` (Python: `commit=False`) to get
 the calibrated $P(\text{yes})$ instead.
-
-## Python
-
-```python
-from jeff import JeffModel
-model = JeffModel("jgeuter/Jeff-1.1-Large")      # or a local folder with the weights; commit=False: calibrated P(yes)
-# reasoning=True, think_share=0.3, think_budget=256, long_input="refuse": as the server options
-model.decide({"ticket": "Refund not received after 14 days"},
-             {"route": {"type": "choice", "instructions": "Which team should handle this?",
-                        "criteria": {"billing": "Payments and refunds", "tech": "Technical problems"}}})
-```
 
 ## Tests
 
