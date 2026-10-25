@@ -66,7 +66,7 @@ Limits on reasoning (optional):
   wrote still count as output). On a slower GPU, fewer reasonings finish, but no answer comes late. With the vLLM
   engine this limit is approximate.
 
-`--jevbench-limits on` sets the limits we use on JevBench (see `reasoning.json`), with `--decision-seconds 9` (JevBench
+`--jevbench-limits on` sets the limits we use on JevBench (see `reasoning.json`), with `--decision-seconds 8.5` (JevBench
 counts a decision that takes more than 10 s as failed). `--reasoning-config FILE` replaces the model's reasoning
 settings with the ones in a JSON file (keys `budget`, `read`, `mix`, `temperatures`, `share`, `jevbench_limits`), e.g.
 settings chosen for a deployment.

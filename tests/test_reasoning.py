@@ -174,7 +174,7 @@ def test_jevbench_limits(tiny):
     folder, _ = tiny("gemma")
     model = load(folder, reasoning=True, jevbench_limits=True, think_share=1.0)
     assert model.reasoning["max_output_per_decision"] == 2.0 and model.reasoning["request_seconds"] == 30.0
-    assert model.reasoning["decision_seconds"] == R.JEVBENCH_DEFAULTS["decision_seconds"] == 9.0
+    assert model.reasoning["decision_seconds"] == R.JEVBENCH_DEFAULTS["decision_seconds"] == 8.5
     for _ in range(8):
         model.decide(STATE, {"route": REQUEST["route"]})
         n, spent = model.decider.reasoner.served

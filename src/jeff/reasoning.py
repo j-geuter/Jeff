@@ -49,8 +49,8 @@ from pathlib import Path
 TYPES = ("choice", "noul", "score")
 LIMITS = ("max_output_per_decision", "max_share", "request_seconds", "decision_seconds")
 # JevBench (method v1.7) counts a decision that takes more than 10 s as failed; --jevbench-limits leaves a margin for
-# the request's way in and out (used when a model's reasoning.json does not set it)
-JEVBENCH_DEFAULTS = {"decision_seconds": 9.0}
+# the request's way in and out and for a slow step (one reasoning step took 0.7 s once in our tests)
+JEVBENCH_DEFAULTS = {"decision_seconds": 8.5}
 
 
 def per_type(value, name: str) -> dict:

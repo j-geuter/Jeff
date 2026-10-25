@@ -179,7 +179,7 @@ def main() -> None:
                             "share, jevbench_limits), e.g. ones chosen for a deployment")
     group.add_argument("--decision-seconds", type=float, default=None,
                        help="answer every question within this many seconds of its request's arrival: a reasoning "
-                            "that cannot finish in time is dropped (one-pass answer); --jevbench-limits on: 9")
+                            "that cannot finish in time is dropped (one-pass answer); --jevbench-limits on: 8.5")
     args = parser.parse_args()
 
     import torch
