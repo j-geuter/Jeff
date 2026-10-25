@@ -68,6 +68,11 @@ def per_type(value, name: str) -> dict:
 
 CONFIG_KEYS = ("budget", "read", "mix", "temperatures", "share", "jevbench_limits", "read_partial")
 
+# --fast-reasoning: the static KV cache has one size, prompts up to this many tokens plus the budget, so transformers
+# compiles the decoding step once (at warm-up) and never while serving (a new size would compile again: minutes). A
+# longer prompt reasons without it: a dynamic cache, not compiled (the speed of --fast-reasoning off).
+STATIC_PROMPT_TOKENS = 4096
+
 
 def read_config(config) -> dict:
     """A reasoning config (--reasoning-config): a dict or a JSON file with some of CONFIG_KEYS, checked."""
@@ -410,6 +415,7 @@ class Reasoner:
         from .prompting import LETTERS
         self.decider, self.config, self.delta, self.rule = decider, dict(config), delta, dict(rule or {})
         self.static_cache = static_cache          # --fast-reasoning: a static KV cache (with the weight copy)
+        self.static_len = STATIC_PROMPT_TOKENS + int(self.config["budget"])     # its size (tokens)
         self.generator = generator                # --reasoning-engine vllm: the base model in vLLM writes
         tok, head = decider.tokenizer, decider.head
         self._torch = torch
@@ -530,11 +536,13 @@ class Reasoner:
                     continue
                 x = torch.tensor([prompt], device=decider.device)
                 stop = {} if end is None else {"stopping_criteria": StoppingCriteriaList([TimeLimit(end, len(prompt), extra)])}
+                static = self.static_cache and len(prompt) + budget <= self.static_len
                 with self.delta.base(), bidir.causal(decider.base):
                     out = decider.model.generate(input_ids=x, attention_mask=torch.ones_like(x), do_sample=False,
                                                  max_new_tokens=budget, eos_token_id=self._stops,
                                                  pad_token_id=self._pad, use_cache=True, **stop,
-                                                 **({"cache_implementation": "static"} if self.static_cache else {}))
+                                                 **({"cache_implementation": "static", "max_cache_len": self.static_len}
+                                                    if static else {}))
                 outs[i] = out[0, len(prompt):].tolist()
         result = []
         for written, end, prompt, t in zip(outs, ends, prompts, t1s):

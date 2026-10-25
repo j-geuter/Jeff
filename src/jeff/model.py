@@ -387,8 +387,8 @@ class JeffModel:
                     for n in (2, 3):
                         self.decider.hidden_batch((rows * 2)[:n])
             if reasoner is not None and (reasoner.static_cache or reasoner.generator is not None):
-                # --fast-reasoning: transformers compiles the decoding steps on first use (minutes for the 31B, and
-                # again for the next input lengths); do it now, on inputs of several lengths, not on the first requests
+                # --fast-reasoning: transformers compiles the decoding step on first use (minutes for the 31B; once:
+                # one static cache size for all prompts, STATIC_PROMPT_TOKENS); do it now, not on the first request
                 for words in (5, 120, 600):
                     try:
                         ids = encode_prompt(self.decider.tokenizer, {**WARMUP, "state": "The sky is blue. " * words},

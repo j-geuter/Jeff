@@ -425,6 +425,25 @@ def test_shared_fast_reasoning_compiles_the_hooks_without_a_copy(tiny):
         load(folder, reasoning=True, fast_reasoning="fastest")
 
 
+def test_fast_reasoning_uses_one_static_cache_size(tiny, monkeypatch):
+    """--fast-reasoning: every reasoning uses one static cache size (compiled once, at warm-up); a prompt too long for
+    it reasons with a dynamic cache (not compiled), and writes the same reasoning."""
+    folder, _ = tiny("gemma")
+    model = load(folder, reasoning=True, think_share=1.0, fast_reasoning="shared")
+    r, budget = model.decider.reasoner, int(model.reasoning["budget"])
+    assert r.static_len == R.STATIC_PROMPT_TOKENS + budget
+    seen, real = [], model.decider.model.generate
+    monkeypatch.setattr(model.decider.model, "generate",
+                        lambda **kw: seen.append((kw.get("cache_implementation"), kw.get("max_cache_len"))) or real(**kw))
+    prompt = r.prompt(encode_prompt(model.decider.tokenizer, model.row(STATE, REQUEST["route"], "route"), 8192))
+    with torch.no_grad():
+        short = r.write([prompt])
+        r.static_len = len(prompt) + budget - 1          # one token too long for the static cache
+        long = r.write([prompt])
+    assert seen == [("static", R.STATIC_PROMPT_TOKENS + budget), (None, None)]
+    assert short == long
+
+
 def test_read_partial_reads_a_reasoning_the_time_limit_cut(tiny, monkeypatch):
     """read_partial: a reasoning stopped by the time limit is read as it stands (prompt, its tokens, "Final answer:"),
     not dropped; without tokens there is nothing to read and the one pass stays."""
