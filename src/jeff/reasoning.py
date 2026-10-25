@@ -69,8 +69,9 @@ def per_type(value, name: str) -> dict:
 CONFIG_KEYS = ("budget", "read", "mix", "temperatures", "share", "jevbench_limits", "read_partial")
 
 # --fast-reasoning: the static KV cache has one size, prompts up to this many tokens plus the budget, so transformers
-# compiles the decoding step once (at warm-up) and never while serving (a new size would compile again: minutes). A
-# longer prompt reasons without it: a dynamic cache, not compiled (the speed of --fast-reasoning off).
+# compiles the decoding step once (at warm-up) and never while serving (a larger size compiled again inside the
+# request: on the 31B, a 6,100-token prompt's reasoning took 8.5 s instead of 4.8 s). A longer prompt reasons without
+# it: a dynamic cache, not compiled (the speed of --fast-reasoning off).
 STATIC_PROMPT_TOKENS = 4096
 
 
