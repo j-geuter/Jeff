@@ -147,6 +147,38 @@ def test_vllm_reasonings_run_as_one_batch_beside_the_decisions(tiny, monkeypatch
     assert alone == model.decide(STATE, {"urgent": REQUEST["urgent"]})
 
 
+def test_decision_seconds_in_batches(tiny, monkeypatch):
+    """decision_seconds with batching: no time to reason gives the one-pass answers of the same batches (both
+    engines), counted as dropped; with time to spare, vLLM gets each prompt's token cap."""
+    folder, _ = tiny("gemma", "full")
+    plain = Batcher(load(folder), max_batch=8).submit(STATE, REQUEST).answers
+    model = load(folder, reasoning=True, think_share=1.0, reasoning_engine="transformers", decision_seconds=1e-6)
+    got = Batcher(model, max_batch=8).submit(STATE, REQUEST)
+    assert got.answers == plain and got.dropped == 3 and got.thought == 0 and got.generated == 0
+    assert model.decider.reasoner.served == [3, 0] and model.decider.reasoner.pending == [0, 0]
+
+    budgets = []
+
+    class FakeVLLM:
+        def __init__(self, base, revision, tokenizer, max_len, memory, max_seqs=1):
+            pass
+
+        def generate_many(self, prompts, budget, stops):
+            budgets.append(budget)
+            return [[p[-1]] * 3 + [stops[0]] for p in prompts]
+
+    monkeypatch.setattr(R, "VLLMGenerator", FakeVLLM)
+    model = load(folder, reasoning=True, think_share=1.0, reasoning_engine="vllm", vllm_base="base-x",
+                 vllm_memory=0.4, decision_seconds=1e-6)
+    got = Batcher(model, max_batch=8).submit(STATE, REQUEST)
+    assert got.answers == plain and got.dropped == 3 and budgets == []
+    model = load(folder, reasoning=True, think_share=1.0, reasoning_engine="vllm", vllm_base="base-x",
+                 vllm_memory=0.4, decision_seconds=600.0)
+    got = Batcher(model, max_batch=8).submit(STATE, REQUEST)
+    assert got.thought == 3 and got.dropped == 0 and got.generated == 9
+    assert budgets and all(isinstance(b, list) and all(0 < x <= 4 for x in b) for b in budgets)
+
+
 def test_batcher_errors_and_wide_questions(tiny):
     folder, _ = tiny("gemma")
     model = load(folder, long_input="refuse")

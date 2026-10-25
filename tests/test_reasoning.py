@@ -42,7 +42,7 @@ def test_one_pass_is_unchanged_and_reasoning_is_off_by_default(tiny):
         row = model.row(STATE, question, key)
         probs, _, n, _ = model.decider.decide(row)
         assert probs == pytest.approx(one_pass(model, row), abs=1e-6) and n > 0
-        assert model.decider.last == {"output_tokens": 0, "thought": False, "shortened": False}
+        assert model.decider.last == {"output_tokens": 0, "thought": False, "dropped": False, "shortened": False}
 
 
 def test_settings_shares_budget_and_limits(tiny):
@@ -136,10 +136,11 @@ def test_reasoned_answer_is_the_pooled_read_at_its_temperature(tiny):
     ids = encode_prompt(model.decider.tokenizer, row, 8192)
     first = one_pass(model, row)
     with torch.no_grad():
-        probs, logits, _ = reasoner.think(ids, 3, "choice", [float(v) for v in torch.tensor(first).log()])
+        probs, logits, _, finished = reasoner.think(ids, 3, "choice", [float(v) for v in torch.tensor(first).log()])
+    assert finished
     reasoner.config["mix"] = False
     with torch.no_grad():
-        read, _, _ = reasoner.think(ids, 3, "choice", [0.0, 0.0, 0.0])        # read alone (pooling off)
+        read, _, _, _ = reasoner.think(ids, 3, "choice", [0.0, 0.0, 0.0])     # read alone (pooling off)
     think_t, rule_t = reasoner.config["temperatures"]["choice"], model.rule["choice_t"]
     z = (torch.tensor(read).log() * think_t / rule_t + torch.tensor(first).log()) / 2   # undo the scaling of `read`
     want = torch.softmax(z / think_t, dim=-1)
@@ -173,6 +174,7 @@ def test_jevbench_limits(tiny):
     folder, _ = tiny("gemma")
     model = load(folder, reasoning=True, jevbench_limits=True, think_share=1.0)
     assert model.reasoning["max_output_per_decision"] == 2.0 and model.reasoning["request_seconds"] == 30.0
+    assert model.reasoning["decision_seconds"] == R.JEVBENCH_DEFAULTS["decision_seconds"] == 9.0
     for _ in range(8):
         model.decide(STATE, {"route": REQUEST["route"]})
         n, spent = model.decider.reasoner.served
@@ -198,6 +200,72 @@ def test_request_time_limit_stops_reasoning(tiny):
     model = load(folder, reasoning=True, think_share=1.0, request_seconds=0.0)
     model.decide(STATE, REQUEST)
     assert model.decider.reasoner.served == [3, 0]
+
+
+def test_time_limit_stops_before_the_token_that_would_end_too_late():
+    """TimeLimit (decision_seconds) on a fake clock: the prefill (time to the first token) gives the read estimate,
+    the steps so far the time per token; it stops once the next token and the read would end after `end`."""
+    now = [100.0]
+    limit = R.TimeLimit(end=104.0, prompt_len=100, extra=4, clock=lambda: now[0])
+    ids = lambda n: torch.zeros((1, 100 + n), dtype=torch.long)
+    now[0] = 100.5            # prefill and first token 0.5 s; next token 0.5 s, read 1.5 x 0.5 x 106 / 100 + 0.05 s
+    assert not limit(ids(1), None).item()
+    now[0] = 101.0            # 0.5 s per token
+    assert not limit(ids(2), None).item()
+    now[0] = 102.7            # slower: 1.1 s per token, 102.7 + 1.1 + 0.86 > 104
+    assert limit(ids(3), None).item()
+
+
+def test_decision_seconds_drops_reasonings_that_cannot_finish(tiny):
+    """No time to reason (decision_seconds tiny): every question keeps its one-pass answer, nothing is written, and
+    the limits' counts stay balanced."""
+    folder, _ = tiny("gemma")
+    plain = load(folder)
+    model = load(folder, reasoning=True, think_share=1.0, decision_seconds=1e-6)
+    for key, question in REQUEST.items():
+        assert model.decide(STATE, {key: question})[key] == plain.decide(STATE, {key: question})[key]
+        assert model.decider.last["dropped"] and not model.decider.last["thought"]
+        assert model.decider.last["output_tokens"] == 0
+    assert model.decider.reasoner.served == [3, 0] and model.decider.reasoner.pending == [0, 0]
+    with pytest.raises(ValueError, match="decision_seconds"):
+        load(folder, reasoning=True, decision_seconds=0.0)
+
+
+def test_decision_seconds_with_time_to_spare_changes_nothing(tiny):
+    folder, _ = tiny("gemma")
+    limited = load(folder, reasoning=True, think_share=1.0, decision_seconds=600.0)
+    free = load(folder, reasoning=True, think_share=1.0)
+    for key, question in REQUEST.items():
+        assert limited.decide(STATE, {key: question}) == free.decide(STATE, {key: question})
+        assert limited.decider.last["thought"] and not limited.decider.last["dropped"]
+    assert limited.decider.reasoner.served == free.decider.reasoner.served
+
+
+def test_a_reasoning_cut_by_the_time_limit_is_dropped(tiny, monkeypatch):
+    """A generation the time limit stops is not read: the one-pass answer, with the written tokens counted."""
+    folder, _ = tiny("gemma")
+    model = load(folder, reasoning=True, think_share=1.0, decision_seconds=600.0)
+    reasoner = model.decider.reasoner
+    ids = encode_prompt(model.decider.tokenizer, model.row(STATE, REQUEST["route"], "route"), 8192)
+    with torch.no_grad():
+        full, finished = reasoner.write([reasoner.prompt(ids)])[0]
+    assert finished
+    if len(full) < 2:
+        pytest.skip("the tiny model stops at once")
+
+    class OutOfTime(R.TimeLimit):                       # no time after the first token
+        def __call__(self, input_ids, scores, **kwargs):
+            return torch.ones(input_ids.shape[0], dtype=torch.bool)
+
+    monkeypatch.setattr(R, "TimeLimit", OutOfTime)
+    with torch.no_grad():
+        gen, finished = reasoner.write([reasoner.prompt(ids)], [reasoner.decision_end()], [0.0])[0]
+        assert not finished and gen == full[:1]
+        assert reasoner.think(ids, 3, "choice", [0.0, 0.0, 0.0], reasoner.decision_end(), 0.0) == (None, None, 1, False)
+    plain = load(folder)
+    assert model.decide(STATE, {"route": REQUEST["route"]}) == plain.decide(STATE, {"route": REQUEST["route"]})
+    assert model.decider.last["dropped"] and model.decider.last["output_tokens"] == 1
+    assert reasoner.served == [1, 1]
 
 
 def test_reasoning_needs_the_question_type(tiny):
@@ -265,7 +333,7 @@ def test_server_reports_output_tokens(tiny):
     finally:
         httpd.shutdown()
         httpd.server_close()
-    assert body["runtime"]["reasoned"] == 3
+    assert body["runtime"]["reasoned"] == 3 and body["runtime"]["reasoning_dropped"] == 0
     assert body["usage"]["output_tokens"] == model.decider.reasoner.served[1] and body["usage"]["input_tokens"] > 0
 
 

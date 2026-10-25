@@ -25,7 +25,13 @@ within the board's cost and latency caps):
   the share of unsure questions. Questions still reasoning count with the full budget until they finish;
 - max_share (`--max-think-share`): no new reasoning while more than this share of the last `window` questions reasoned
   (after `warmup` questions); this keeps the median latency at one forward pass;
-- request_seconds: no new reasoning once a request has taken this long, so a request with many questions stays bounded.
+- request_seconds: no new reasoning once a request has taken this long, so a request with many questions stays bounded;
+- decision_seconds S (`--decision-seconds`): every question of a request is answered within about S seconds of the
+  request's arrival. A question reasons only if its one pass leaves time; the generation stops when the next token and
+  the read after it would end later than S (the read time is estimated from the measured prefill time), and such a
+  cut reasoning is dropped: the question keeps its one-pass answer (its generated tokens still count as output). So a
+  slower GPU only means fewer finished reasonings. With the vLLM engine the limit is a token cap from the measured
+  speed, so it is approximate there.
 Without limits, every question below its threshold reasons.
 """
 from __future__ import annotations
@@ -41,7 +47,10 @@ import time
 from pathlib import Path
 
 TYPES = ("choice", "noul", "score")
-LIMITS = ("max_output_per_decision", "max_share", "request_seconds")
+LIMITS = ("max_output_per_decision", "max_share", "request_seconds", "decision_seconds")
+# JevBench (method v1.7) counts a decision that takes more than 10 s as failed; --jevbench-limits leaves a margin for
+# the request's way in and out (used when a model's reasoning.json does not set it)
+JEVBENCH_DEFAULTS = {"decision_seconds": 9.0}
 
 
 def per_type(value, name: str) -> dict:
@@ -89,7 +98,10 @@ def settings(folder, share=None, budget: int | None = None, jevbench_limits: boo
         out["budget"] = int(budget)
     for key in LIMITS:
         value = limits.get(key)
-        out[key] = value if value is not None else (config["jevbench_limits"][key] if jevbench_limits else None)
+        default = config["jevbench_limits"].get(key, JEVBENCH_DEFAULTS.get(key)) if jevbench_limits else None
+        out[key] = value if value is not None else default
+    if out["decision_seconds"] is not None and float(out["decision_seconds"]) <= 0:
+        raise ValueError("decision_seconds must be positive")
     return out
 
 
@@ -287,12 +299,14 @@ class VLLMGenerator:
         except (TypeError, ValueError):
             self.llm = LLM(**kwargs)
 
-    def generate_many(self, prompts: list[list[int]], budget: int, stops: list[int]) -> list[list[int]]:
-        """The written tokens for each prompt, in order (vLLM runs them as one batch)."""
+    def generate_many(self, prompts: list[list[int]], budget: int | list[int], stops: list[int]) -> list[list[int]]:
+        """The written tokens for each prompt, in order (vLLM runs them as one batch); budget: one for all prompts, or
+        one per prompt."""
         from vllm import SamplingParams
         from vllm.inputs import TokensPrompt
-        params = SamplingParams(temperature=0.0, max_tokens=budget, stop_token_ids=stops, detokenize=False,
-                                skip_special_tokens=False)
+        budgets = budget if isinstance(budget, list) else [budget] * len(prompts)
+        params = [SamplingParams(temperature=0.0, max_tokens=b, stop_token_ids=stops, detokenize=False,
+                                 skip_special_tokens=False) for b in budgets]
         out = self.llm.generate([TokensPrompt(prompt_token_ids=p) for p in prompts], params, use_tqdm=False)
         return [list(o.outputs[0].token_ids) for o in out]
 
@@ -325,6 +339,32 @@ def vllm_usable(folder: Path, device: str = "cuda") -> str | None:
     except ValueError as error:
         return str(error)
     return None
+
+
+def read_seconds(prefill: float, prompt_len: int, total_len: int) -> float:
+    """Expected time of the read pass over total_len tokens, from the measured time of a forward pass (or prefill) over
+    prompt_len tokens, with room to spare (x 1.5, + 50 ms)."""
+    return 1.5 * prefill * total_len / max(1, prompt_len) + 0.05
+
+
+class TimeLimit:
+    """decision_seconds for one transformers generation (a stopping criterion): stop before the token after which the
+    read would end later than `end` (a time.perf_counter() time). The read time is estimated from this generation's
+    prefill (the time to its first token)."""
+
+    def __init__(self, end: float, prompt_len: int, extra: int, clock=time.perf_counter):
+        self.end, self.prompt_len, self.extra, self.clock = end, prompt_len, extra, clock
+        self.start, self.first = clock(), None
+
+    def __call__(self, input_ids, scores, **kwargs):
+        import torch
+        now = self.clock()
+        new = input_ids.shape[1] - self.prompt_len
+        if self.first is None:
+            self.first = now - self.start
+        step = (now - self.start - self.first) / (new - 1) if new > 1 else self.first
+        stop = now + step + read_seconds(self.first, self.prompt_len, self.prompt_len + new + 1 + self.extra) > self.end
+        return torch.full((input_ids.shape[0],), stop, dtype=torch.bool, device=input_ids.device)
 
 
 class Reasoner:
@@ -364,9 +404,20 @@ class Reasoner:
         self.served = [0, 0]                    # questions answered and output tokens generated since the start
         self.pending = [0, 0]                   # questions still reasoning, and their budgets (counted as spent)
         self.deadline = None                    # time.perf_counter() after which no question of this request reasons
+        self.started = time.perf_counter()      # when the current request arrived (decision_seconds counts from it)
+        self._spt = 0.05                        # vLLM: seconds per generated token, as measured (for decision_seconds)
 
     def start_request(self) -> None:
+        self.started = time.perf_counter()
         self.deadline = self.request_deadline()
+
+    def decision_end(self, started: float | None = None) -> float | None:
+        """The time.perf_counter() time by which a question of a request that arrived at `started` (default: the one
+        start_request() saw) must be answered (decision_seconds; None: no limit)."""
+        seconds = self.config.get("decision_seconds")
+        if seconds is None:
+            return None
+        return (self.started if started is None else started) + float(seconds)
 
     def request_deadline(self) -> float | None:
         seconds = self.config.get("request_seconds")
@@ -408,33 +459,68 @@ class Reasoner:
     def prompt(self, ids: list[int]) -> list[int]:
         return ids + self._opener
 
-    def write(self, prompts: list[list[int]]) -> list[list[int]]:
-        """The reasoning of each prompt (base model, greedy, up to the budget; cut before the first stop token): one
-        vLLM batch, or one transformers generation after another."""
+    def write(self, prompts: list[list[int]], ends: list[float | None] | None = None,
+              t1s: list[float] | None = None) -> list[tuple[list[int], bool]]:
+        """(reasoning, finished) for each prompt: the base model writes greedily up to the budget, cut before the first
+        stop token; one vLLM batch, or one transformers generation after another. ends: per prompt, the time
+        (time.perf_counter()) by which its read must be done (decision_end(); None: no limit); t1s: the seconds its
+        question's one pass took (for the estimates). A reasoning that could not end by then, or not start, is not
+        finished: the caller keeps the one-pass answer."""
         torch = self._torch
         from . import bidir
-        budget, decider = int(self.config["budget"]), self.decider
+        budget, decider, extra = int(self.config["budget"]), self.decider, len(self._suffix)
+        ends = ends or [None] * len(prompts)
+        t1s = t1s or [0.0] * len(prompts)
+        # the earliest a reasoning can be read: its prefill (about one pass) and the read of the prompt alone
+        late = [e is not None and time.perf_counter() + t + read_seconds(t, len(p), len(p) + extra) > e
+                for p, e, t in zip(prompts, ends, t1s)]
+        caps = [budget] * len(prompts)
+        outs = [None] * len(prompts)
         if self.generator is not None:
-            outs = self.generator.generate_many(prompts, budget, self._stops)
+            now = time.perf_counter()
+            for i, (p, e, t) in enumerate(zip(prompts, ends, t1s)):
+                if e is not None and not late[i]:          # vLLM cannot stop on time: cap the tokens at its speed
+                    room = e - now - t - read_seconds(t, len(p), len(p) + budget + extra)
+                    caps[i] = max(0, min(budget, int(room / self._spt)))
+            todo = [i for i in range(len(prompts)) if not late[i] and caps[i] > 0]
+            if todo:
+                start = time.perf_counter()
+                got = self.generator.generate_many([prompts[i] for i in todo], [caps[i] for i in todo], self._stops)
+                longest = max(len(g) for g in got)
+                if longest:                                # a running estimate of the time per token
+                    self._spt = 0.7 * self._spt + 0.3 * (time.perf_counter() - start) / longest
+                for i, g in zip(todo, got):
+                    outs[i] = g
         else:
-            outs = []
-            for prompt in prompts:
+            from transformers import StoppingCriteriaList
+            for i, (prompt, end) in enumerate(zip(prompts, ends)):
+                if late[i]:
+                    continue
                 x = torch.tensor([prompt], device=decider.device)
+                stop = {} if end is None else {"stopping_criteria": StoppingCriteriaList([TimeLimit(end, len(prompt), extra)])}
                 with self.delta.base(), bidir.causal(decider.base):
                     out = decider.model.generate(input_ids=x, attention_mask=torch.ones_like(x), do_sample=False,
                                                  max_new_tokens=budget, eos_token_id=self._stops,
-                                                 pad_token_id=self._pad, use_cache=True,
+                                                 pad_token_id=self._pad, use_cache=True, **stop,
                                                  **({"cache_implementation": "static"} if self.static_cache else {}))
-                outs.append(out[0, len(prompt):].tolist())
-        cut = []
-        for written in outs:
-            gen = []
+                outs[i] = out[0, len(prompt):].tolist()
+        result = []
+        for written, end, prompt, t in zip(outs, ends, prompts, t1s):
+            if written is None:
+                result.append(([], False))
+                continue
+            gen, stopped = [], False
             for token in written:
                 if token in self._stops:
+                    stopped = True
                     break
                 gen.append(token)
-            cut.append(gen)
-        return cut
+            # finished: ended by a stop token or the full budget (not by the time limit or a vLLM token cap)
+            finished = stopped or len(gen) >= budget
+            if finished and end is not None and self.generator is not None:
+                finished = time.perf_counter() + read_seconds(t, len(prompt), len(prompt) + len(gen) + extra) <= end
+            result.append((gen, finished))
+        return result
 
     def read_ids(self, prompt: list[int], gen: list[int]) -> list[int]:
         """What the decision model reads after the reasoning: prompt, reasoning, "Final answer:"."""
@@ -464,9 +550,14 @@ class Reasoner:
         logits = z * (rule_t / think_t)
         return torch.softmax(logits, dim=-1).tolist(), logits.tolist()
 
-    def think(self, ids: list[int], k: int, qtype: str, first: list[float]) -> tuple[list[float], list[float], int]:
-        """(probabilities, logits, generated tokens) after reasoning; `first` = the one-pass option logits."""
+    def think(self, ids: list[int], k: int, qtype: str, first: list[float], end: float | None = None,
+              t1: float = 0.0) -> tuple[list[float] | None, list[float] | None, int, bool]:
+        """(probabilities, logits, generated tokens, finished) after reasoning; `first` = the one-pass option logits;
+        end, t1: as write(). A reasoning that did not finish in time is not read: (None, None, its tokens, False), and
+        the question keeps its one-pass answer."""
         prompt = self.prompt(ids)
-        gen = self.write([prompt])[0]
+        gen, finished = self.write([prompt], [end], [t1])[0]
+        if not finished:
+            return None, None, len(gen), False
         probs, logits = self.read(self.decider.hidden(self.read_ids(prompt, gen)), k, qtype, first)
-        return probs, logits, len(gen)
+        return probs, logits, len(gen), True

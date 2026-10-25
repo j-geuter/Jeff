@@ -16,8 +16,8 @@ their question-relevant parts (--long-input refuse: HTTP 422 instead); questions
 256) are answered in groups of 16.
 
 Jeff 1.1 models can reason when unsure (jeff.reasoning): --reasoning on, with limits of your choice (--think-share,
---think-threshold, --max-think-share, --max-output-per-decision, --request-seconds) or the ones we evaluate JevBench
-with (--jevbench-limits on):
+--think-threshold, --max-think-share, --max-output-per-decision, --request-seconds, --decision-seconds) or the ones we
+evaluate JevBench with (--jevbench-limits on):
 
     python -m jeff.serve jgeuter/Jeff-1.0-Large --host 0.0.0.0 --port 8013
     python -m jeff.serve jgeuter/Jeff-1.1-Large --reasoning on --jevbench-limits on --port 8013
@@ -34,9 +34,10 @@ from pathlib import Path
 from .model import JeffModel
 
 
-def answer_serially(model: JeffModel, state, questions: dict) -> tuple[dict, int, int, float, int]:
-    """(answers, input tokens, output tokens, forward seconds, questions that reasoned), one question after another."""
-    answers, tokens, forward, generated, thought = {}, 0, 0.0, 0, 0
+def answer_serially(model: JeffModel, state, questions: dict) -> tuple[dict, int, int, float, int, int]:
+    """(answers, input tokens, output tokens, forward seconds, questions that reasoned, reasonings dropped because
+    they could not finish within decision_seconds), one question after another."""
+    answers, tokens, forward, generated, thought, dropped = {}, 0, 0.0, 0, 0, 0
     model.decider.start_request()
     for key, question in questions.items():
         row = model.row(state, question, key)
@@ -45,14 +46,15 @@ def answer_serially(model: JeffModel, state, questions: dict) -> tuple[dict, int
         tokens, forward = tokens + n, forward + seconds
         generated += int(model.decider.last.get("output_tokens", 0))
         thought += int(bool(model.decider.last.get("thought")))
-    return answers, tokens, generated, forward, thought
+        dropped += int(bool(model.decider.last.get("dropped")))
+    return answers, tokens, generated, forward, thought, dropped
 
 
 def answer_batched(batcher) -> callable:
-    def answer(model: JeffModel, state, questions: dict) -> tuple[dict, int, int, float, int]:
+    def answer(model: JeffModel, state, questions: dict) -> tuple[dict, int, int, float, int, int]:
         request = batcher.submit(state, questions)
         answers = {key: request.answers[key] for key in request.keys}
-        return answers, request.tokens, request.generated, request.seconds, request.thought
+        return answers, request.tokens, request.generated, request.seconds, request.thought, request.dropped
     return answer
 
 
@@ -85,7 +87,7 @@ def make_handler(model: JeffModel, meta: dict, answer=answer_serially):
                 questions = body["questions"]
                 if not isinstance(questions, dict) or not questions:
                     raise ValueError("questions must be a nonempty object")
-                answers, tokens, generated, forward, thought = answer(model, body["state"], questions)
+                answers, tokens, generated, forward, thought, dropped = answer(model, body["state"], questions)
             except (KeyError, TypeError, ValueError) as error:
                 return self._send(422, {"error": f"{type(error).__name__}: {error}"})
             except Exception as error:  # e.g. out of GPU memory: answer with the error instead of dropping the connection
@@ -94,7 +96,7 @@ def make_handler(model: JeffModel, meta: dict, answer=answer_serially):
             self._send(200, {"answers": answers, "model": model.name,
                              "usage": {"input_tokens": tokens, "output_tokens": generated},
                              "runtime": {**meta, "forward_seconds": forward, "input_tokens": tokens,
-                                         "reasoned": thought}})
+                                         "reasoned": thought, "reasoning_dropped": dropped}})
     return Handler
 
 
@@ -172,6 +174,9 @@ def main() -> None:
                        help="no new reasoning while more than this share of the last 1,000 questions reasoned")
     group.add_argument("--request-seconds", type=float, default=None,
                        help="no new reasoning once a request has taken this long")
+    group.add_argument("--decision-seconds", type=float, default=None,
+                       help="answer every question within this many seconds of its request's arrival: a reasoning "
+                            "that cannot finish in time is dropped (one-pass answer); --jevbench-limits on: 9")
     args = parser.parse_args()
 
     import torch
@@ -183,7 +188,8 @@ def main() -> None:
                       fast_reasoning=args.fast_reasoning, reasoning_engine=args.reasoning_engine,
                       vllm_memory=args.vllm_memory, vllm_base=args.vllm_base,
                       vllm_seqs=min(args.max_batch, 16) if args.batching else 1, think_threshold=args.think_threshold,
-                      max_think_share=args.max_think_share, cache_dir=args.cache_dir)
+                      max_think_share=args.max_think_share, cache_dir=args.cache_dir,
+                      decision_seconds=args.decision_seconds)
     model.warmup(batch=args.batching)
     batcher = None
     if args.batching:
@@ -191,7 +197,8 @@ def main() -> None:
         batcher = Batcher(model, args.max_batch, args.max_batch_tokens)
     gpu = torch.cuda.get_device_name(0) if torch.cuda.is_available() else "cpu"
     reasoning = model.reasoning and {k: model.reasoning[k] for k in (
-        "share", "tau", "budget", "temperatures", "max_output_per_decision", "max_share", "request_seconds")}
+        "share", "tau", "budget", "temperatures", "max_output_per_decision", "max_share", "request_seconds",
+        "decision_seconds")}
     if batcher:
         print(f"batching: up to {batcher.max_batch} questions and {batcher.max_tokens} padded input tokens per batch",
               flush=True)

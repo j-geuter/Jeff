@@ -26,7 +26,9 @@ class Request:
 
     def __init__(self, keys: list[str], deadline: float | None):
         self.keys, self.left, self.deadline = list(keys), len(keys), deadline
+        self.started = time.perf_counter()        # decision_seconds counts from here
         self.answers, self.tokens, self.generated, self.thought, self.seconds = {}, 0, 0, 0, 0.0
+        self.dropped = 0                          # reasonings that could not finish in time (one-pass answers)
         self.error = None
         self.done = threading.Event()
         self.lock = threading.Lock()
@@ -39,6 +41,7 @@ class Job:
         self.request, self.key, self.question, self.row = request, key, question, row
         self.ids, self.k, self.stage, self.input_tokens = None, 0, "first", 0
         self.first, self.prompt, self.gen = None, None, None
+        self.probs1, self.t1 = None, 0.0           # the one-pass answer and its time (for a dropped reasoning)
         self.admitted = self.counted = False       # reasoning admitted by the limits / its output counted
 
 
@@ -158,19 +161,22 @@ class Batcher:
                 self._answer(job, probs, 0, False, share)
             elif self.parallel:                   # vLLM writes it; the read pass comes back to this worker
                 job.first, job.prompt, job.stage = logits, reasoner.prompt(job.ids), "write"
+                job.probs1, job.t1 = probs, share
                 self.reasonings.put(job)
             else:
-                inline.append((job, logits))
-        for job, logits in inline:                # transformers: after the rest of the batch is answered
+                inline.append((job, logits, probs))
+        for job, logits, probs1 in inline:        # transformers: after the rest of the batch is answered
             start = time.perf_counter()
             try:
-                probs, _, generated = reasoner.think(job.ids, job.k, job.row["qtype"], logits)
+                probs, _, generated, finished = reasoner.think(job.ids, job.k, job.row["qtype"], logits,
+                                                               reasoner.decision_end(job.request.started), share)
             except Exception as error:            # noqa: BLE001
                 self._release(job)
                 self._fail(job, error)
                 continue
             self._count(job, generated)
-            self._answer(job, probs, generated, True, share + time.perf_counter() - start)
+            self._answer(job, probs if finished else probs1, generated, finished, share + time.perf_counter() - start,
+                         dropped=not finished)
 
     def _wide(self, job: Job) -> None:
         """More than 16 options: answered alone, in groups (Decider.decide_wide; these questions do not reason)."""
@@ -191,13 +197,19 @@ class Batcher:
                 except queue.Empty:
                     break
             try:
-                gens = reasoner.write([job.prompt for job in batch])
+                gens = reasoner.write([job.prompt for job in batch],
+                                      [reasoner.decision_end(job.request.started) for job in batch],
+                                      [job.t1 for job in batch])
             except Exception as error:            # noqa: BLE001
                 for job in batch:
                     self._release(job)
                     self._fail(job, error)
                 continue
-            for job, gen in zip(batch, gens):
+            for job, (gen, finished) in zip(batch, gens):
+                if not finished:                  # no time to read it: the one-pass answer
+                    self._count(job, len(gen))
+                    self._answer(job, job.probs1, len(gen), False, job.t1, dropped=True)
+                    continue
                 job.gen, job.ids, job.stage = gen, reasoner.read_ids(job.prompt, gen), "read"
                 self.jobs.put(job)
 
@@ -215,7 +227,8 @@ class Batcher:
         if self.decider.reasoner is not None and job.admitted:
             self._count(job, 0)
 
-    def _answer(self, job: Job, probs: list[float], generated: int, thought: bool, seconds: float) -> None:
+    def _answer(self, job: Job, probs: list[float], generated: int, thought: bool, seconds: float,
+                dropped: bool = False) -> None:
         answer = self.model.answer(job.question["type"], [o["id"] for o in job.row["options"]], probs)
         request = job.request
         with request.lock:
@@ -223,6 +236,7 @@ class Batcher:
             request.tokens += job.input_tokens
             request.generated += generated
             request.thought += int(thought)
+            request.dropped += int(dropped)
             request.seconds += seconds
             request.left -= 1
             if request.left == 0:

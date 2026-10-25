@@ -83,7 +83,8 @@ def load_causal_model(folder: Path, device: str = "cuda", dtype: str = "bfloat16
 
 class Decider:
     """One model + head; decide(row) -> option probabilities, option logits, input tokens, seconds. After each call,
-    `last` holds {"output_tokens", "thought", "shortened"} for that decision."""
+    `last` holds {"output_tokens", "thought", "dropped", "shortened"} for that decision (dropped: a reasoning that
+    could not finish within decision_seconds; the answer is the one pass)."""
 
     def __init__(self, model, tokenizer, head, max_tokens: int = MAX_TOKENS, bidirectional: str | None = None,
                  long_input: str = "filter"):
@@ -103,7 +104,7 @@ class Decider:
         self.long_input = long_input
         self.reasoner = None           # a jeff.reasoning.Reasoner when reasoning is on
         self.forward = self.base       # the decision forward pass; compile() swaps in a compiled one
-        self.last = {"output_tokens": 0, "thought": False, "shortened": False}
+        self.last = {"output_tokens": 0, "thought": False, "dropped": False, "shortened": False}
 
     def hidden(self, ids: list[int]):
         """Post-final-norm hidden state at the last position (with bidirectional masks for such models)."""
@@ -205,7 +206,7 @@ class Decider:
 
     def _decide(self, row: dict) -> tuple[list[float], list[float], int, float]:
         torch = self._torch
-        self.last = {"output_tokens": 0, "thought": False, "shortened": False}
+        self.last = {"output_tokens": 0, "thought": False, "dropped": False, "shortened": False}
         reasoner = self.reasoner
         row, ids, self.last["shortened"] = self.prepare(row)
         self.cudnn_for(len(ids))
@@ -214,10 +215,14 @@ class Decider:
         with torch.inference_mode():
             probs, logits = self.first(self.hidden(ids), k)
             if reasoner is not None:
-                if reasoner.wants(row["qtype"], probs):
-                    probs, logits, generated = reasoner.think(ids, k, row["qtype"], logits)
-                    self.last.update(output_tokens=generated, thought=True)
-                reasoner.count(self.last["output_tokens"], self.last["thought"])
+                admitted = reasoner.wants(row["qtype"], probs)
+                if admitted:
+                    t1 = time.perf_counter() - start            # the one pass (its .tolist() waited for the GPU)
+                    p, z, generated, finished = reasoner.think(ids, k, row["qtype"], logits, reasoner.decision_end(), t1)
+                    if finished:
+                        probs, logits = p, z
+                    self.last.update(output_tokens=generated, thought=finished, dropped=not finished)
+                reasoner.count(self.last["output_tokens"], admitted)
         if self.device.type == "cuda":
             torch.cuda.synchronize(self.device)
         return probs, logits, len(ids), time.perf_counter() - start
@@ -273,8 +278,8 @@ class JeffModel:
     reasoning (default False; Jeff 1.1 models): reason when unsure (jeff.reasoning). With it: jevbench_limits (default
     False) applies the limits we evaluate on JevBench with; think_share (a number, or {type: share}) and think_budget
     override the released share of questions that reason and the most tokens a reasoning may take; think_threshold (a
-    number, or {type: threshold}) sets confidence thresholds directly; max_output_per_decision, max_think_share and
-    request_seconds set those limits on their own.
+    number, or {type: threshold}) sets confidence thresholds directly; max_output_per_decision, max_think_share,
+    request_seconds and decision_seconds set those limits on their own.
 
     reasoning_engine: what writes the reasoning. "transformers": this model, with the adapter removed by hooks (or a
     second weight copy with fast_reasoning); "vllm": the base model in vLLM on the same GPU, rebuilt from this release
@@ -290,7 +295,7 @@ class JeffModel:
                  compile: bool = False, fast_reasoning: bool = False, reasoning_engine: str = "auto",
                  vllm_memory: float | None = None, vllm_base: str | None = None, vllm_seqs: int = 1,
                  think_threshold: float | dict | None = None, max_think_share: float | None = None,
-                 cache_dir: str | Path | None = None):
+                 cache_dir: str | Path | None = None, decision_seconds: float | None = None):
         from . import bidir
         folder = model_folder(ref, revision)
         self.folder = folder
@@ -308,7 +313,8 @@ class JeffModel:
             from .reasoning import settings
             self.reasoning = settings(folder, share=think_share, budget=think_budget, jevbench_limits=jevbench_limits,
                                       threshold=think_threshold, max_output_per_decision=max_output_per_decision,
-                                      max_share=max_think_share, request_seconds=request_seconds)
+                                      max_share=max_think_share, request_seconds=request_seconds,
+                                      decision_seconds=decision_seconds)
         self.rule = json.loads((folder / "serving_rule.json").read_text()) if rule is None else rule
         if not commit:
             self.rule = {k: v for k, v in self.rule.items() if k != "noul_edge"}
