@@ -80,6 +80,17 @@ The container reads the weights from `/model` and needs no network access (it al
 needs one GPU with enough memory (for the 31B and 27B models e.g. H100 80GB, or H200 when reasoning with vLLM); `--gpus` needs the [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/)
 on the host.
 
+## Python
+
+```python
+from jeff import JeffModel
+model = JeffModel("jgeuter/Jeff-1.1-Large")      # or a local folder with the weights; commit=False: calibrated P(yes)
+# reasoning=True, think_share=0.3, think_budget=256, long_input="refuse": as the server options
+model.decide({"ticket": "Refund not received after 14 days"},
+             {"route": {"type": "choice", "instructions": "Which team should handle this?",
+                        "criteria": {"billing": "Payments and refunds", "tech": "Technical problems"}}})
+```
+
 ## Requirements
 
 Tested with Python 3.12, torch 2.13.0 (CUDA 13.0), transformers 5.17.0 and accelerate 1.15.0 (`requirements.txt`).
@@ -181,17 +192,6 @@ get HTTP 422; a failure during the forward pass (for example, out of GPU memory)
 Yes/no answers: JevBench counts $0.2 < P(\text{yes}) < 0.8$ as wrong, so by default the server commits such answers to
 0.199 or 0.801 (whichever edge is nearer, as `"urgent"` above). Start it with `--commit off` (Python: `commit=False`) to get
 the calibrated $P(\text{yes})$ instead.
-
-## Python
-
-```python
-from jeff import JeffModel
-model = JeffModel("jgeuter/Jeff-1.1-Large")      # or a local folder with the weights; commit=False: calibrated P(yes)
-# reasoning=True, think_share=0.3, think_budget=256, long_input="refuse": as the server options
-model.decide({"ticket": "Refund not received after 14 days"},
-             {"route": {"type": "choice", "instructions": "Which team should handle this?",
-                        "criteria": {"billing": "Payments and refunds", "tech": "Technical problems"}}})
-```
 
 ## Tests
 
