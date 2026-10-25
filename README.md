@@ -116,7 +116,7 @@ batch. `--batching off` answers one request at a time.
 
 ```bash
 pip install -r requirements.txt && pip install .
-jeff-serve jgeuter/Jeff-1.1-Large --revision REVISION-LARGE --host 127.0.0.1 --port 8013
+jeff-serve jgeuter/Jeff-1.1-Large --revision 970c21af246a44c5527f7109fca129ab6015c941 --host 127.0.0.1 --port 8013
 ```
 
 On the first start this downloads the weights (about 64 GB) into the Hugging Face cache, which is `~/.cache/huggingface`
@@ -130,7 +130,7 @@ about 64 GB free (`hf` comes with `pip install huggingface_hub`):
 
 ```bash
 export JEFF_DIR=$HOME/models/Jeff-1.1-Large          # any folder you like
-hf download jgeuter/Jeff-1.1-Large --revision REVISION-LARGE --local-dir "$JEFF_DIR"
+hf download jgeuter/Jeff-1.1-Large --revision 970c21af246a44c5527f7109fca129ab6015c941 --local-dir "$JEFF_DIR"
 docker build -t jeff .
 docker run --gpus '"device=0"' -v "$JEFF_DIR":/model:ro -p 127.0.0.1:8013:8013 jeff
 python scripts/smoke_test.py --endpoint http://127.0.0.1:8013      # check it
