@@ -65,10 +65,33 @@ def per_type(value, name: str) -> dict:
     return {q: float(v) for q, v in out.items()}
 
 
+CONFIG_KEYS = ("budget", "read", "mix", "temperatures", "share", "jevbench_limits")
+
+
+def read_config(config) -> dict:
+    """A reasoning config (--reasoning-config): a dict or a JSON file with some of CONFIG_KEYS, checked."""
+    out = json.loads(Path(config).read_text()) if isinstance(config, (str, Path)) else dict(config)
+    unknown = sorted(set(out) - set(CONFIG_KEYS))
+    if unknown:
+        raise ValueError(f"reasoning config: unknown keys {unknown} (allowed: {', '.join(CONFIG_KEYS)})")
+    if out.get("read", "letters") not in ("letters", "head"):
+        raise ValueError(f"reasoning config: read must be letters or head, got {out['read']!r}")
+    for q, t in out.get("temperatures", {}).items():
+        if q not in TYPES or not float(t) > 0:
+            raise ValueError(f"reasoning config: temperatures need a positive value per type, got {q}: {t}")
+    if "share" in out:
+        out["share"] = {**per_type(out["share"], "think share")}
+    if "budget" in out and int(out["budget"]) < 1:
+        raise ValueError("the think budget must be at least 1 token")
+    return out
+
+
 def settings(folder, share=None, budget: int | None = None, jevbench_limits: bool = False, threshold=None,
-             **limits) -> dict:
+             config=None, **limits) -> dict:
     """The reasoning settings of a model folder (reasoning.json), with overrides.
 
+    config: a dict or JSON file whose keys (CONFIG_KEYS) replace reasoning.json's (jevbench_limits: merged), e.g. the
+    budget, read, pooling ("mix"), temperatures and shares chosen for a deployment; the other arguments apply on top.
     share: None (the released shares), one number for all types, or {type: share}. threshold: None, one number or
     {type: confidence threshold}, used directly instead of a share's threshold (a type cannot have both). limits:
     values for LIMITS (None = not given); with jevbench_limits, the released value of every limit that is not given."""
@@ -76,7 +99,14 @@ def settings(folder, share=None, budget: int | None = None, jevbench_limits: boo
     if not path.is_file():
         raise ValueError(f"{folder}: this model has no reasoning settings (reasoning.json); Jeff 1.0 models answer in "
                          "one forward pass only")
-    config = json.loads(path.read_text())
+    config, given_config = json.loads(path.read_text()), read_config(config) if config is not None else {}
+    for key, value in given_config.items():
+        if key == "jevbench_limits":
+            config[key] = {**config[key], **value}
+        elif key in ("temperatures", "share"):
+            config[key] = {**config[key], **value}
+        else:
+            config[key] = value
     given = per_type(share, "think share") if share is not None else {}
     fixed = per_type(threshold, "think threshold") if threshold is not None else {}
     both = sorted(set(given) & set(fixed))

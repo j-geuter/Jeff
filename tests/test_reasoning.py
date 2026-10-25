@@ -268,6 +268,25 @@ def test_a_reasoning_cut_by_the_time_limit_is_dropped(tiny, monkeypatch):
     assert reasoner.served == [1, 1]
 
 
+def test_reasoning_config_replaces_the_released_settings(tiny, tmp_path):
+    """--reasoning-config: budget, read, pooling, temperatures, shares and JevBench limits from a file; checked."""
+    folder, _ = tiny("gemma")
+    path = tmp_path / "jevbench.json"
+    path.write_text(json.dumps({"budget": 2, "read": "head", "mix": False, "temperatures": {"choice": 2.5},
+                                "share": {"noul": 1.0}, "jevbench_limits": {"decision_seconds": 7.5}}))
+    model = load(folder, reasoning=True, jevbench_limits=True, reasoning_config=str(path))
+    r = model.reasoning
+    assert r["budget"] == 2 and r["read"] == "head" and r["mix"] is False and r["decision_seconds"] == 7.5
+    assert r["temperatures"]["choice"] == 2.5 and r["temperatures"]["noul"] == R.json.loads(
+        (folder / "reasoning.json").read_text())["temperatures"]["noul"]
+    assert r["share"]["noul"] == 1.0 and r["tau"]["noul"] == 2.0          # share 1: every question reasons
+    model.decide(STATE, {"urgent": REQUEST["urgent"]})
+    assert model.decider.last["thought"] and model.decider.last["output_tokens"] <= 2
+    for bad in ({"budgets": 3}, {"read": "lm"}, {"temperatures": {"choice": 0}}, {"share": {"choice": 2}}):
+        with pytest.raises(ValueError):
+            load(folder, reasoning=True, reasoning_config=bad)
+
+
 def test_reasoning_needs_the_question_type(tiny):
     folder, _ = tiny("gemma")
     model = load(folder, reasoning=True)

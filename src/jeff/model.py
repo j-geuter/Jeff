@@ -279,7 +279,8 @@ class JeffModel:
     False) applies the limits we evaluate on JevBench with; think_share (a number, or {type: share}) and think_budget
     override the released share of questions that reason and the most tokens a reasoning may take; think_threshold (a
     number, or {type: threshold}) sets confidence thresholds directly; max_output_per_decision, max_think_share,
-    request_seconds and decision_seconds set those limits on their own.
+    request_seconds and decision_seconds set those limits on their own; reasoning_config (a dict or JSON file) replaces
+    reasoning.json's budget, read, pooling, temperatures, shares or JevBench limits (jeff.reasoning.read_config).
 
     reasoning_engine: what writes the reasoning. "transformers": this model, with the adapter removed by hooks (or a
     second weight copy with fast_reasoning); "vllm": the base model in vLLM on the same GPU, rebuilt from this release
@@ -295,7 +296,8 @@ class JeffModel:
                  compile: bool = False, fast_reasoning: bool = False, reasoning_engine: str = "auto",
                  vllm_memory: float | None = None, vllm_base: str | None = None, vllm_seqs: int = 1,
                  think_threshold: float | dict | None = None, max_think_share: float | None = None,
-                 cache_dir: str | Path | None = None, decision_seconds: float | None = None):
+                 cache_dir: str | Path | None = None, decision_seconds: float | None = None,
+                 reasoning_config: str | Path | dict | None = None):
         from . import bidir
         folder = model_folder(ref, revision)
         self.folder = folder
@@ -314,7 +316,7 @@ class JeffModel:
             self.reasoning = settings(folder, share=think_share, budget=think_budget, jevbench_limits=jevbench_limits,
                                       threshold=think_threshold, max_output_per_decision=max_output_per_decision,
                                       max_share=max_think_share, request_seconds=request_seconds,
-                                      decision_seconds=decision_seconds)
+                                      decision_seconds=decision_seconds, config=reasoning_config)
         self.rule = json.loads((folder / "serving_rule.json").read_text()) if rule is None else rule
         if not commit:
             self.rule = {k: v for k, v in self.rule.items() if k != "noul_edge"}

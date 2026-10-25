@@ -174,6 +174,9 @@ def main() -> None:
                        help="no new reasoning while more than this share of the last 1,000 questions reasoned")
     group.add_argument("--request-seconds", type=float, default=None,
                        help="no new reasoning once a request has taken this long")
+    group.add_argument("--reasoning-config", default=None, metavar="FILE",
+                       help="JSON file replacing the model's reasoning settings (keys: budget, read, mix, temperatures, "
+                            "share, jevbench_limits), e.g. ones chosen for a deployment")
     group.add_argument("--decision-seconds", type=float, default=None,
                        help="answer every question within this many seconds of its request's arrival: a reasoning "
                             "that cannot finish in time is dropped (one-pass answer); --jevbench-limits on: 9")
@@ -189,7 +192,7 @@ def main() -> None:
                       vllm_memory=args.vllm_memory, vllm_base=args.vllm_base,
                       vllm_seqs=min(args.max_batch, 16) if args.batching else 1, think_threshold=args.think_threshold,
                       max_think_share=args.max_think_share, cache_dir=args.cache_dir,
-                      decision_seconds=args.decision_seconds)
+                      decision_seconds=args.decision_seconds, reasoning_config=args.reasoning_config)
     model.warmup(batch=args.batching)
     batcher = None
     if args.batching:
@@ -197,8 +200,8 @@ def main() -> None:
         batcher = Batcher(model, args.max_batch, args.max_batch_tokens)
     gpu = torch.cuda.get_device_name(0) if torch.cuda.is_available() else "cpu"
     reasoning = model.reasoning and {k: model.reasoning[k] for k in (
-        "share", "tau", "budget", "temperatures", "max_output_per_decision", "max_share", "request_seconds",
-        "decision_seconds")}
+        "share", "tau", "budget", "read", "mix", "temperatures", "max_output_per_decision", "max_share",
+        "request_seconds", "decision_seconds")}
     if batcher:
         print(f"batching: up to {batcher.max_batch} questions and {batcher.max_tokens} padded input tokens per batch",
               flush=True)
