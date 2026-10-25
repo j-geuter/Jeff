@@ -145,9 +145,14 @@ def main() -> None:
     group.add_argument("--jevbench-limits", type=on_off, default=False, metavar="on|off",
                        help="the limits we evaluate on JevBench with: mean output tokens per question, share of "
                             "questions that reason, seconds per request (default off)")
-    group.add_argument("--fast-reasoning", action="store_true",
-                       help="write the reasoning with a second copy of the base weights and a static KV cache: about "
-                            "2.4x faster generation on the 31B, needs the model's memory twice (e.g. an H200 for the 31B)")
+    group.add_argument("--fast-reasoning", nargs="?", const="copy", default="off", choices=("off", "copy", "shared", "auto"),
+                       help="compiled reasoning with a static KV cache: copy (the default when given without a value): a "
+                            "second copy of the base weights, about 2.4x faster generation on the 31B, needs the model's "
+                            "memory twice; shared: no copy, the adapter removed by hooks inside the compiled step; auto: "
+                            "copy when there is room, else shared"),
+    group.add_argument("--read-partial", type=on_off, default=None, metavar="on|off",
+                       help="read a reasoning that the time limit (--decision-seconds) cut, instead of dropping it "
+                            "(default: the reasoning settings' read_partial, else off)")
     group.add_argument("--reasoning-engine", choices=("auto", "transformers", "vllm"), default="auto",
                        help="what writes the reasoning: the base model in vLLM on the same GPU (pip install "
                             "\".[vllm]\"; about 3.5x faster generation on the 31B, reasonings batched; the GPU must "
@@ -192,7 +197,8 @@ def main() -> None:
                       vllm_memory=args.vllm_memory, vllm_base=args.vllm_base,
                       vllm_seqs=min(args.max_batch, 16) if args.batching else 1, think_threshold=args.think_threshold,
                       max_think_share=args.max_think_share, cache_dir=args.cache_dir,
-                      decision_seconds=args.decision_seconds, reasoning_config=args.reasoning_config)
+                      decision_seconds=args.decision_seconds, reasoning_config=args.reasoning_config,
+                      read_partial=args.read_partial)
     model.warmup(batch=args.batching)
     batcher = None
     if args.batching:
@@ -201,7 +207,7 @@ def main() -> None:
     gpu = torch.cuda.get_device_name(0) if torch.cuda.is_available() else "cpu"
     reasoning = model.reasoning and {k: model.reasoning[k] for k in (
         "share", "tau", "budget", "read", "mix", "temperatures", "max_output_per_decision", "max_share",
-        "request_seconds", "decision_seconds")}
+        "request_seconds", "decision_seconds", "read_partial")}
     if batcher:
         print(f"batching: up to {batcher.max_batch} questions and {batcher.max_tokens} padded input tokens per batch",
               flush=True)

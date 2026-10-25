@@ -206,7 +206,8 @@ class Batcher:
                     self._fail(job, error)
                 continue
             for job, (gen, finished) in zip(batch, gens):
-                if not finished:                  # no time to read it: the one-pass answer
+                end = reasoner.decision_end(job.request.started)
+                if not finished and not reasoner.can_read(job.prompt, gen, end, job.t1):   # the one-pass answer
                     self._count(job, len(gen))
                     self._answer(job, job.probs1, len(gen), False, job.t1, dropped=True)
                     continue

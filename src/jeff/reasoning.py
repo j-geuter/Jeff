@@ -29,8 +29,9 @@ within the board's cost and latency caps):
 - decision_seconds S (`--decision-seconds`): every question of a request is answered within about S seconds of the
   request's arrival. A question reasons only if its one pass leaves time; the generation stops when the next token and
   the read after it would end later than S (the read time is estimated from the measured prefill time), and such a
-  cut reasoning is dropped: the question keeps its one-pass answer (its generated tokens still count as output). So a
-  slower GPU only means fewer finished reasonings. With the vLLM engine the limit is a token cap from the measured
+  cut reasoning is dropped: the question keeps its one-pass answer (its generated tokens still count as output), or,
+  with read_partial (`--read-partial on`), it is read as it stands, as if it had ended at its budget. So a slower GPU
+  only means fewer finished (or shorter) reasonings. With the vLLM engine the limit is a token cap from the measured
   speed, so it is approximate there.
 Without limits, every question below its threshold reasons.
 """
@@ -65,7 +66,7 @@ def per_type(value, name: str) -> dict:
     return {q: float(v) for q, v in out.items()}
 
 
-CONFIG_KEYS = ("budget", "read", "mix", "temperatures", "share", "jevbench_limits")
+CONFIG_KEYS = ("budget", "read", "mix", "temperatures", "share", "jevbench_limits", "read_partial")
 
 
 def read_config(config) -> dict:
@@ -87,7 +88,7 @@ def read_config(config) -> dict:
 
 
 def settings(folder, share=None, budget: int | None = None, jevbench_limits: bool = False, threshold=None,
-             config=None, **limits) -> dict:
+             config=None, read_partial: bool | None = None, **limits) -> dict:
     """The reasoning settings of a model folder (reasoning.json), with overrides.
 
     config: a dict or JSON file whose keys (CONFIG_KEYS) replace reasoning.json's (jevbench_limits: merged), e.g. the
@@ -132,6 +133,7 @@ def settings(folder, share=None, budget: int | None = None, jevbench_limits: boo
         out[key] = value if value is not None else default
     if out["decision_seconds"] is not None and float(out["decision_seconds"]) <= 0:
         raise ValueError("decision_seconds must be positive")
+    out["read_partial"] = bool(config.get("read_partial", False) if read_partial is None else read_partial)
     return out
 
 
@@ -552,6 +554,13 @@ class Reasoner:
             result.append((gen, finished))
         return result
 
+    def can_read(self, prompt: list[int], gen: list[int], end: float | None, t1: float) -> bool:
+        """Whether a reasoning cut by the time limit is read anyway (read_partial): it has tokens and its read still
+        ends in time (the transformers time limit stops early enough for that; vLLM's token cap may not)."""
+        return (bool(self.config.get("read_partial")) and bool(gen)
+                and (end is None or time.perf_counter() + read_seconds(t1, len(prompt), len(prompt) + len(gen)
+                                                                     + len(self._suffix)) <= end))
+
     def read_ids(self, prompt: list[int], gen: list[int]) -> list[int]:
         """What the decision model reads after the reasoning: prompt, reasoning, "Final answer:"."""
         return prompt + gen + self._suffix
@@ -582,12 +591,12 @@ class Reasoner:
 
     def think(self, ids: list[int], k: int, qtype: str, first: list[float], end: float | None = None,
               t1: float = 0.0) -> tuple[list[float] | None, list[float] | None, int, bool]:
-        """(probabilities, logits, generated tokens, finished) after reasoning; `first` = the one-pass option logits;
-        end, t1: as write(). A reasoning that did not finish in time is not read: (None, None, its tokens, False), and
-        the question keeps its one-pass answer."""
+        """(probabilities, logits, generated tokens, read) after reasoning; `first` = the one-pass option logits;
+        end, t1: as write(). A reasoning that did not finish in time is not read (None, None, its tokens, False), and
+        the question keeps its one-pass answer, unless read_partial reads it as it stands (can_read)."""
         prompt = self.prompt(ids)
         gen, finished = self.write([prompt], [end], [t1])[0]
-        if not finished:
+        if not finished and not self.can_read(prompt, gen, end, t1):
             return None, None, len(gen), False
         probs, logits = self.read(self.decider.hidden(self.read_ids(prompt, gen)), k, qtype, first)
         return probs, logits, len(gen), True

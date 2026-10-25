@@ -405,6 +405,58 @@ def test_fast_reasoning_swaps_in_a_copy_of_the_base_weights(tiny, kind):
     assert model.decider.last["thought"] and sum(answer["probabilities"].values()) == pytest.approx(1.0, abs=1e-6)
 
 
+def test_shared_fast_reasoning_compiles_the_hooks_without_a_copy(tiny):
+    """--fast-reasoning shared: no second copy (the hooks stay), a static KV cache; the reasoning is the one the plain
+    hooks write; auto takes the copy when there is room (always on the CPU); unknown modes are refused."""
+    folder, _ = tiny("gemma")
+    shared = load(folder, reasoning=True, think_share=1.0, fast_reasoning="shared")
+    plain = load(folder, reasoning=True, think_share=1.0)
+    r = shared.decider.reasoner
+    assert shared.fast_reasoning == "shared" and r.static_cache and r.delta.handles and not r.delta.copies
+    ids = encode_prompt(shared.decider.tokenizer, shared.row(STATE, REQUEST["route"], "route"), 8192)
+    with torch.no_grad():
+        assert r.write([r.prompt(ids)]) == plain.decider.reasoner.write([plain.decider.reasoner.prompt(ids)])
+    answer = shared.decide(STATE, {"route": REQUEST["route"]})["route"]
+    assert shared.decider.last["thought"] and sum(answer["probabilities"].values()) == pytest.approx(1.0, abs=1e-6)
+    auto = load(folder, reasoning=True, fast_reasoning="auto")
+    assert auto.fast_reasoning == "copy" and auto.decider.reasoner.delta.copies
+    assert load(folder, reasoning=True, fast_reasoning=True).fast_reasoning == "copy"
+    with pytest.raises(ValueError, match="fast_reasoning"):
+        load(folder, reasoning=True, fast_reasoning="fastest")
+
+
+def test_read_partial_reads_a_reasoning_the_time_limit_cut(tiny, monkeypatch):
+    """read_partial: a reasoning stopped by the time limit is read as it stands (prompt, its tokens, "Final answer:"),
+    not dropped; without tokens there is nothing to read and the one pass stays."""
+    folder, _ = tiny("gemma")
+    model = load(folder, reasoning=True, think_share=1.0, decision_seconds=600.0, read_partial=True)
+    reasoner = model.decider.reasoner
+    assert model.reasoning["read_partial"] is True
+    ids = encode_prompt(model.decider.tokenizer, model.row(STATE, REQUEST["route"], "route"), 8192)
+    with torch.no_grad():
+        full, _ = reasoner.write([reasoner.prompt(ids)])[0]
+    if len(full) < 2:
+        pytest.skip("the tiny model stops at once")
+
+    class OutOfTime(R.TimeLimit):                       # no time after the first token
+        def __call__(self, input_ids, scores, **kwargs):
+            return torch.ones(input_ids.shape[0], dtype=torch.bool)
+
+    monkeypatch.setattr(R, "TimeLimit", OutOfTime)
+    first = [0.1, -0.2, 0.3]
+    with torch.no_grad():
+        probs, _, n, read = reasoner.think(ids, 3, "choice", first, reasoner.decision_end(), 0.0)
+        want, _ = reasoner.read(model.decider.hidden(reasoner.read_ids(reasoner.prompt(ids), full[:1])), 3, "choice",
+                                first)
+    assert read and n == 1 and probs == pytest.approx(want, abs=1e-6)
+    model.decide(STATE, {"route": REQUEST["route"]})
+    assert model.decider.last["thought"] and not model.decider.last["dropped"]
+    assert model.decider.last["output_tokens"] == 1
+    off = load(folder, reasoning=True, think_share=1.0, decision_seconds=1e-6, read_partial=True)
+    off.decide(STATE, {"route": REQUEST["route"]})               # no time to start: nothing written, nothing read
+    assert off.decider.last["dropped"] and off.decider.last["output_tokens"] == 0
+
+
 def test_vllm_engine_writes_the_reasoning(tiny, monkeypatch):
     """--reasoning-engine vllm: the generator (vLLM, here a stand-in) is built before the decision model with the base
     model and the memory share, writes the reasoning (cut at the first stop token), and no adapter hooks are needed."""

@@ -35,6 +35,7 @@ from .longinput import plain_state, shorten
 from .prompting import MAX_OPTIONS, MAX_WIDE, PROMPT_VERSION, encode_prompt, render_prompt, validate_row
 
 MAX_TOKENS = 8192          # as in all our evaluations; longer inputs are filtered (jeff.longinput) or refused
+FAST_REASONING = ("off", "copy", "shared", "auto")
 LONG_INPUT = ("filter", "refuse")
 WARMUP = {"id": "warmup", "state": "The sky is blue.", "question": "Is the sky blue?", "qtype": "noul",
           "options": [{"id": "true", "description": "true: yes"}, {"id": "false", "description": "false: no"}]}
@@ -280,24 +281,30 @@ class JeffModel:
     override the released share of questions that reason and the most tokens a reasoning may take; think_threshold (a
     number, or {type: threshold}) sets confidence thresholds directly; max_output_per_decision, max_think_share,
     request_seconds and decision_seconds set those limits on their own; reasoning_config (a dict or JSON file) replaces
-    reasoning.json's budget, read, pooling, temperatures, shares or JevBench limits (jeff.reasoning.read_config).
+    reasoning.json's budget, read, pooling, temperatures, shares or JevBench limits (jeff.reasoning.read_config);
+    read_partial: read a reasoning cut by decision_seconds instead of dropping it (default: the config's, else off).
 
     reasoning_engine: what writes the reasoning. "transformers": this model, with the adapter removed by hooks (or a
-    second weight copy with fast_reasoning); "vllm": the base model in vLLM on the same GPU, rebuilt from this release
+    second weight copy, see fast_reasoning); "vllm": the base model in vLLM on the same GPU, rebuilt from this release
     once (jeff.reasoning.derive_base, under cache_dir) unless vllm_base names one; "auto" (default): vLLM if it is
     installed and the GPU can hold the model twice, else transformers. vllm_seqs: how many reasonings vLLM writes at
-    once."""
+    once.
+
+    fast_reasoning (transformers engine): "off" (False, default): hooks, a dynamic KV cache; "copy" (True): a second
+    copy of the adapted layers' weights and a static KV cache, which transformers compiles (the hooks when the GPU has
+    no room for the copy); "shared": the hooks with a static KV cache, compiled, so no second copy is needed; "auto":
+    copy when there is room, else shared."""
 
     def __init__(self, ref: str | Path, revision: str | None = None, device: str = "cuda",
                  rule: dict | None = None, cudnn_attention: bool = False, commit: bool = True,
                  long_input: str = "filter", reasoning: bool = False, jevbench_limits: bool = False,
                  think_share: float | dict | None = None, think_budget: int | None = None,
                  max_output_per_decision: float | None = None, request_seconds: float | None = None,
-                 compile: bool = False, fast_reasoning: bool = False, reasoning_engine: str = "auto",
+                 compile: bool = False, fast_reasoning: bool | str = False, reasoning_engine: str = "auto",
                  vllm_memory: float | None = None, vllm_base: str | None = None, vllm_seqs: int = 1,
                  think_threshold: float | dict | None = None, max_think_share: float | None = None,
                  cache_dir: str | Path | None = None, decision_seconds: float | None = None,
-                 reasoning_config: str | Path | dict | None = None):
+                 reasoning_config: str | Path | dict | None = None, read_partial: bool | None = None):
         from . import bidir
         folder = model_folder(ref, revision)
         self.folder = folder
@@ -316,7 +323,8 @@ class JeffModel:
             self.reasoning = settings(folder, share=think_share, budget=think_budget, jevbench_limits=jevbench_limits,
                                       threshold=think_threshold, max_output_per_decision=max_output_per_decision,
                                       max_share=max_think_share, request_seconds=request_seconds,
-                                      decision_seconds=decision_seconds, config=reasoning_config)
+                                      decision_seconds=decision_seconds, config=reasoning_config,
+                                      read_partial=read_partial)
         self.rule = json.loads((folder / "serving_rule.json").read_text()) if rule is None else rule
         if not commit:
             self.rule = {k: v for k, v in self.rule.items() if k != "noul_edge"}
@@ -324,10 +332,13 @@ class JeffModel:
             disable_cudnn_attention()
         if reasoning_engine not in ("auto", "transformers", "vllm"):
             raise ValueError(f"reasoning_engine must be auto, transformers or vllm, got {reasoning_engine!r}")
+        fast = {True: "copy", False: "off", None: "off"}.get(fast_reasoning, fast_reasoning)
+        if fast not in FAST_REASONING:
+            raise ValueError(f"fast_reasoning must be one of {FAST_REASONING}, got {fast_reasoning!r}")
         generator = None
         if self.reasoning is not None and reasoning_engine == "auto":
             from .reasoning import vllm_usable
-            why = "--fast-reasoning asks for transformers" if fast_reasoning else vllm_usable(folder, device)
+            why = "--fast-reasoning asks for transformers" if fast != "off" else vllm_usable(folder, device)
             reasoning_engine = "transformers" if why else "vllm"
             if why:
                 print(f"reasoning with transformers ({why})", flush=True)
@@ -351,13 +362,14 @@ class JeffModel:
             self.decider.reasoner = Reasoner(self.decider, self.reasoning, None, self.rule, generator=generator)
         elif self.reasoning is not None:
             from .reasoning import LoraDelta, Reasoner
-            copy = fast_reasoning and LoraDelta.copy_fits(model, folder / "adapter")
-            if fast_reasoning and not copy:
-                print("--fast-reasoning: not enough GPU memory for a second copy of the weights; using the hooks",
-                      flush=True)
-            self.fast_reasoning = copy
+            copy = fast in ("copy", "auto") and LoraDelta.copy_fits(model, folder / "adapter")
+            shared = fast == "shared" or (fast == "auto" and not copy)
+            if fast in ("copy", "auto") and not copy:
+                print(f"--fast-reasoning: not enough GPU memory for a second copy of the weights; using the hooks"
+                      f"{' (compiled, shared weights)' if shared else ''}", flush=True)
+            self.fast_reasoning = "copy" if copy else ("shared" if shared else False)
             self.decider.reasoner = Reasoner(self.decider, self.reasoning, LoraDelta(model, folder / "adapter", copy=copy),
-                                             self.rule, static_cache=copy)
+                                             self.rule, static_cache=copy or shared)
 
     def warmup(self, times: int = 3, batch: bool = False) -> None:
         """A few forward passes (kernels, allocator; with compile: the compiled graphs, for short and long inputs, and
