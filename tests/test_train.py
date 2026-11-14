@@ -181,6 +181,19 @@ def test_export_averages_runs_and_serves(tiny, bank, tmp_path, kind):
         h = T.last_hidden(decoder, [T.encode(tokenizer, row, 8192)], tokenizer.pad_token_id, "cpu")
         reference = torch.softmax(model.decider.head(h)[0, : len(row["options"])], -1)
     torch.testing.assert_close(torch.tensor(probs, dtype=torch.float32), reference, atol=1e-4, rtol=1e-3)
+    # reasoning: the released settings, and a question that reasons (share 1: every question)
+    assert (out / "reasoning.json").read_bytes() == (E.RELEASED / "Jeff-1.1-Large.reasoning.json").read_bytes()
+    thinking = JeffModel(out, device="cpu", reasoning=True, think_share=1.0, think_budget=4,
+                         reasoning_engine="transformers")
+    thinking.decider.decide(row)
+    assert thinking.decider.last["thought"] and thinking.decider.last["output_tokens"] > 0
+
+
+def test_released_reasoning_settings_for_every_model():
+    from jeff.reasoning import TYPES
+    for name in E.SERVING_RULES:
+        config = json.loads((E.RELEASED / f"{name}.reasoning.json").read_text())
+        assert all(len(config["tau_table"][q]) == 101 for q in TYPES) and config["budget"] in (256, 512)
 
 
 def test_export_needs_a_released_name(tmp_path):

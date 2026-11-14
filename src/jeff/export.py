@@ -6,9 +6,15 @@ Each released Jeff 1.1 model averages three runs (seeds 1, 2 and 3):
 - the adapters become one LoRA adapter of rank 3r and alpha 3 alpha, with the runs' A matrices stacked and their B
   matrices divided by 3, so it adds exactly the mean of the three runs' weight changes;
 - the head is the mean of the three heads (every tensor, including mu and sigma).
-The adapter is then merged into the backbone's bf16 weights. The folder also keeps the adapter (adapter/), which the
-optional reasoning mode uses. serving_rule.json gets the per-type temperatures of the released model (SERVING_RULES; we
-fitted them on our own held-out data) and the yes/no commit (noul_edge 0.0).
+The adapter is then merged into the backbone's bf16 weights.
+
+The folder has the files of a released model, so `jeff-serve <folder>` and `JeffModel(<folder>)` serve it like one:
+merged weights and tokenizer, the head (head.safetensors, head_config.json), jeff_config.json, serving_rule.json with
+the released model's per-type temperatures and the yes/no commit (SERVING_RULES), and, for the optional reasoning mode,
+the adapter (adapter/: the reasoning is written by the base model, i.e. the merged model without it) and the released
+model's reasoning settings (reasoning.json, from jeff/released/). We fitted the temperatures and the reasoning thresholds
+on our own held-out data. A retrained model is close to the released one, so they should fit it closely, but not exactly: with
+`--think-share 0.3`, for example, the share of questions that reason should be near 0.3.
 """
 from __future__ import annotations
 
@@ -22,6 +28,7 @@ import torch
 from .prompting import MAX_OPTIONS, PROMPT_VERSION
 from .train import load_base
 
+RELEASED = Path(__file__).parent / "released"
 SERVING_RULES = {
     "Jeff-1.1-Large": {"choice_t": 1.4933825289366305, "noul_t": 1.568051655383462, "score_t": 1.1143850361606575,
                        "noul_edge": 0.0},
@@ -100,6 +107,7 @@ def text_model_keys(out: Path) -> None:
 
 
 def export(name: str, runs: list[Path], out: Path, device: str = "cuda") -> Path:
+    """Write the averaged model to out (must be empty or new); returns out."""
     from peft import PeftModel
     from safetensors.torch import save_file
     if name not in SERVING_RULES:
@@ -122,6 +130,7 @@ def export(name: str, runs: list[Path], out: Path, device: str = "cuda") -> Path
     head_config = json.loads((runs[0] / "head_config.json").read_text())
     (out / "head_config.json").write_text(json.dumps(head_config, indent=1) + "\n")
     (out / "serving_rule.json").write_text(json.dumps(SERVING_RULES[name], indent=1) + "\n")
+    shutil.copyfile(RELEASED / f"{name}.reasoning.json", out / "reasoning.json")
     (out / "jeff_config.json").write_text(json.dumps({
         "name": name, "version": "1.1", "base_model": base["source"], "base_revision": base.get("revision"),
         "bidirectional": config.get("bidirectional"), "prompt_version": PROMPT_VERSION,

@@ -240,9 +240,12 @@ longer than 8,192 tokens are left out.
 - Each GPU holds the whole model in bf16, so the 27B and 31B models need GPUs with about 140 GB (H200). The times are
   from our runs, which also ran a validation every 50 steps.
 - GPU computations are not bitwise reproducible, so a retrained model is close to the released one but not identical.
-- `jeff.export` writes the per-type temperatures of the released model into `serving_rule.json`. We fitted them on our
-  own held-out data, which is not public. The folder has no `reasoning.json`; to use `--reasoning on`, copy that file
-  from the released model.
+- `jeff.export` writes a folder with the same files as a released model: the merged weights, the head, the averaged
+  adapter, and the released model's settings (`serving_rule.json`: temperatures and yes/no commit; `reasoning.json`:
+  reasoning settings). So the retrained model also reasons when unsure with `--reasoning on`, and `--think-share`,
+  `--think-threshold` and `--think-budget` set how much (see [Reasoning](#reasoning-jeff-11)). We fitted these settings
+  on our own held-out data for the released models. They should fit a retrained model closely but not exactly; for
+  example, with `--think-share 0.3` the share of questions that reason should be near 0.3.
 - We trained each 1,500-step run in two parts: 800 steps, then on from the step-700 state to 1,500 steps. Up to step 700
   the two schedules are the same, so this is the same as one 1,500-step run.
 

@@ -25,6 +25,9 @@ jeff-serve = "jeff.serve:main"
 [tool.setuptools.packages.find]
 where = ["src"]
 
+[tool.setuptools.package-data]
+jeff = ["released/*.json"]                             # reasoning settings of the released models (jeff.export)
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src"]
