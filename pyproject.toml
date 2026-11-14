@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "jeff"
 version = "1.4.0"
-description = "Serving code for Jeff decision models (TypeSafe System One wire format, as used by JevBench)"
+description = "Serving and training code for Jeff decision models (TypeSafe System One wire format, as used by JevBench)"
 readme = "README.md"
 license = {text = "Apache-2.0"}
 requires-python = ">=3.10"
@@ -15,6 +15,7 @@ dependencies = ["torch>=2.11", "transformers>=5.17", "safetensors>=0.5", "huggin
 
 [project.optional-dependencies]
 test = ["pytest>=7"]
+train = ["peft==0.21.0"]                             # jeff.train and jeff.export
 vllm = ["vllm==0.30.0"]                              # --reasoning-engine vllm
 qwen-kernels = ["flash-linear-attention==0.5.2"]     # faster linear-attention layers of the Qwen models
 

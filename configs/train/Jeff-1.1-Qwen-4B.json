@@ -1,0 +1,34 @@
+{
+ "name": "Jeff-1.1-Qwen-4B",
+ "model": {
+  "source": "Qwen/Qwen3.5-4B",
+  "revision": "851bf6e806efd8d0a36b00ddf55e13ccb7b8cd0a"
+ },
+ "bidirectional": "full",
+ "lora": {
+  "r": 32,
+  "alpha": 64,
+  "dropout": 0.0,
+  "target_modules": [
+   "q_proj",
+   "k_proj",
+   "v_proj",
+   "o_proj",
+   "in_proj_qkv",
+   "in_proj_z",
+   "out_proj",
+   "gate_proj",
+   "up_proj",
+   "down_proj"
+  ]
+ },
+ "lr_lora": 0.0001,
+ "lr_head": 0.0001,
+ "batch_tokens": 8192,
+ "grad_accum": 2,
+ "max_tokens": 8192,
+ "max_steps": 800,
+ "warmup": 250,
+ "decay_start": 700,
+ "checkpoint_every": 100
+}

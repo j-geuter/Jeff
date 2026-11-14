@@ -1,6 +1,6 @@
 # Jeff: Jev-style decision models from open LLMs
 
-Serving code for the **Jeff** decision models: a state, a typed question, and its
+Serving and training code for the **Jeff** decision models: a state, a typed question, and its
 options go in, and one forward pass returns a probability for each option. Jeff 1.1 models can also reason before
 answering when they are unsure (off by default, see [Reasoning](#reasoning-jeff-11)).
 
@@ -201,10 +201,55 @@ Yes/no answers: JevBench counts $0.2 < P(\text{yes}) < 0.8$ as wrong, so by defa
 0.199 or 0.801 (whichever edge is nearer, as `"urgent"` above). Start it with `--commit off` (Python: `commit=False`) to get
 the calibrated $P(\text{yes})$ instead.
 
+## Training (Jeff 1.1)
+
+`jeff.train` trains one run: LoRA adapters on the backbone and the decision head, trained together on
+[DecisionBank-260k](https://huggingface.co/datasets/jgeuter/DecisionBank/viewer/DecisionBank-260k) (261,561
+questions). Each released model is the average of three runs with seeds 1, 2 and 3. `jeff.export` averages the runs and
+writes a model folder that `jeff-serve` reads. `configs/train/` holds the settings of the four released models.
+
+```bash
+pip install ".[train]"
+for seed in 1 2 3; do
+  torchrun --nproc_per_node=4 -m jeff.train --config configs/train/Jeff-1.1-Large.json --seed $seed --out runs/Large-s$seed
+done
+python -m jeff.export --name Jeff-1.1-Large --runs runs/Large-s1 runs/Large-s2 runs/Large-s3 --out models/Jeff-1.1-Large
+jeff-serve models/Jeff-1.1-Large --port 8013
+```
+
+| | Jeff-1.1-Large | Jeff-1.1-Qwen-27B | Jeff-1.1-Medium | Jeff-1.1-Qwen-4B |
+|---|---|---|---|---|
+| Backbone | gemma-4-31B-it | Qwen3.6-27B | gemma-4-12B-it | Qwen3.5-4B |
+| Attention | causal | bidirectional | bidirectional | bidirectional |
+| Steps | 1,500 | 1,500 | 1,500 | 800 |
+| LoRA learning rate | 2e-5 | 2e-5 | 2e-5 | 1e-4 |
+| GPUs (4 per run) | H200 | H200 | H100 | H100 |
+| Time per run | about 8 h | about 4 h | about 3 h | about 35 min |
+
+All models: LoRA of rank 32 (alpha 64) on the attention and MLP projections (and the linear-attention projections of
+the Qwen models), head learning rate 1e-4, AdamW without weight decay, gradient clipping at 1.0. The learning rate rises
+over 250 steps, stays constant, and decays over the last 100 steps. A step averages over 4 GPUs with 2 batches of at
+most 8,192 padded tokens each. The loss is the cross-entropy against each question's target distribution. Questions
+longer than 8,192 tokens are left out.
+
+- Run the same command again to continue an interrupted run: it resumes from the training state saved every 100
+  steps (same number of GPUs).
+- For the Qwen models, also install the fast linear-attention kernels (`pip install ".[train,qwen-kernels]"`, plus
+  `causal-conv1d` if it builds on your machine). Our runs used flash-linear-attention 0.5.2 and causal-conv1d 1.7.0;
+  without them, training is much slower (and differs from ours by small numerical differences only).
+- Each GPU holds the whole model in bf16, so the 27B and 31B models need GPUs with about 140 GB (H200). The times are
+  from our runs, which also ran a validation every 50 steps.
+- GPU computations are not bitwise reproducible, so a retrained model is close to the released one but not identical.
+- `jeff.export` writes the per-type temperatures of the released model into `serving_rule.json`. We fitted them on our
+  own held-out data, which is not public. The folder has no `reasoning.json`; to use `--reasoning on`, copy that file
+  from the released model.
+- We trained each 1,500-step run in two parts: 800 steps, then on from the step-700 state to 1,500 steps. Up to step 700
+  the two schedules are the same, so this is the same as one 1,500-step run.
+
 ## Tests
 
 ```bash
-pip install ".[test]" && pytest                                  # CPU tests, with tiny random models (no download)
+pip install ".[test,train]" && pytest                            # CPU tests, with tiny random models (no download)
 python scripts/smoke_test.py --endpoint http://127.0.0.1:8013   # a running server's answers vs. ours
 ```
 
