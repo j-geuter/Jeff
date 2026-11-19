@@ -201,11 +201,10 @@ Yes/no answers: JevBench counts $0.2 < P(\text{yes}) < 0.8$ as wrong, so by defa
 0.199 or 0.801 (whichever edge is nearer, as `"urgent"` above). Start it with `--commit off` (Python: `commit=False`) to get
 the calibrated $P(\text{yes})$ instead.
 
-## Training (Jeff 1.1)
+## Training
 
-`jeff.train` trains one run: LoRA adapters on the backbone and the decision head, trained together on
-[DecisionBank-260k](https://huggingface.co/datasets/jgeuter/DecisionBank/viewer/DecisionBank-260k) (261,561
-questions). Each released model is the average of three runs with seeds 1, 2 and 3. `jeff.export` averages the runs and
+We open-source the training code for our Jeff-1.1 models. `jeff.train` trains LoRA adapters on the backbone and the decision head, trained together on
+[DecisionBank-260k](https://huggingface.co/datasets/jgeuter/DecisionBank/viewer/DecisionBank-260k). Each released model is the average of three runs with seeds 1, 2 and 3. `jeff.export` averages the runs and
 writes a model folder that `jeff-serve` reads. `configs/train/` holds the settings of the four released models.
 
 ```bash
@@ -226,28 +225,20 @@ jeff-serve models/Jeff-1.1-Large --port 8013
 | GPUs (4 per run) | H200 | H200 | H100 | H100 |
 | Time per run | about 8 h | about 4 h | about 3 h | about 35 min |
 
-All models: LoRA of rank 32 (alpha 64) on the attention and MLP projections (and the linear-attention projections of
-the Qwen models), head learning rate 1e-4, AdamW without weight decay, gradient clipping at 1.0. The learning rate rises
-over 250 steps, stays constant, and decays over the last 100 steps. A step averages over 4 GPUs with 2 batches of at
-most 8,192 padded tokens each. The loss is the cross-entropy against each question's target distribution. Questions
-longer than 8,192 tokens are left out.
+All models were trained with LoRA of rank 32 (alpha 64) on the attention and MLP projections (and the linear-attention projections of
+the Qwen models), head learning rate 1e-4, AdamW without weight decay, and gradient clipping at 1.0. The learning rate rises
+over 250 steps, stays constant, and decays over the last 100 steps.
 
-- Run the same command again to continue an interrupted run: it resumes from the training state saved every 100
-  steps (same number of GPUs).
+- Running the same command again will resume an interrupted training run (saved every 100 steps)
 - For the Qwen models, also install the fast linear-attention kernels (`pip install ".[train,qwen-kernels]"`, plus
   `causal-conv1d` if it builds on your machine). Our runs used flash-linear-attention 0.5.2 and causal-conv1d 1.7.0;
-  without them, training is much slower (and differs from ours by small numerical differences only).
+  without them, training is much slower (and differs from ours by small numerical differences).
 - Each GPU holds the whole model in bf16, so the 27B and 31B models need GPUs with about 140 GB (H200). The times are
   from our runs, which also ran a validation every 50 steps.
-- GPU computations are not bitwise reproducible, so a retrained model is close to the released one but not identical.
-- `jeff.export` writes a folder with the same files as a released model: the merged weights, the head, the averaged
-  adapter, and the released model's settings (`serving_rule.json`: temperatures and yes/no commit; `reasoning.json`:
-  reasoning settings). So the retrained model also reasons when unsure with `--reasoning on`, and `--think-share`,
-  `--think-threshold` and `--think-budget` set how much (see [Reasoning](#reasoning-jeff-11)). We fitted these settings
-  on our own held-out data for the released models. They should fit a retrained model closely but not exactly; for
-  example, with `--think-share 0.3` the share of questions that reason should be near 0.3.
-- We trained each 1,500-step run in two parts: 800 steps, then on from the step-700 state to 1,500 steps. Up to step 700
-  the two schedules are the same, so this is the same as one 1,500-step run.
+- `jeff.export` writes a folder with the same files as a released model, which includes the merged weights, the head, the averaged
+  adapter, and reasoning (see [Reasoning](#reasoning-jeff-11)). We fitted these settings
+  on our own held-out data for the released models. They should fit a retrained model closely, but might to fit exactly (for
+  example, with `--think-share 0.3` the share of questions that reason should be near 0.3).
 
 ## Tests
 
@@ -263,6 +254,9 @@ This test checks the outputs on three example questions against the probabilitie
 
 The code is Apache-2.0 (`LICENSE`); it contains code derived from SemIf and JevBench (MIT), see `NOTICE`. The model
 weights are CC BY-NC 4.0, as given in the model cards.
+
+## Feedback
+If you have any feedback, or run into any issues with our code, please reach out and/or create an issue!
 
 ## Citation
 
