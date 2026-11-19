@@ -229,7 +229,7 @@ All models were trained with LoRA of rank 32 (alpha 64) on the attention and MLP
 the Qwen models), head learning rate 1e-4, AdamW without weight decay, and gradient clipping at 1.0. The learning rate rises
 over 250 steps, stays constant, and decays over the last 100 steps.
 
-- Running the same command again will resume an interrupted training run (saved every 100 steps)
+- Running the same command again will resume an interrupted training run (saved every 100 steps).
 - For the Qwen models, also install the fast linear-attention kernels (`pip install ".[train,qwen-kernels]"`, plus
   `causal-conv1d` if it builds on your machine). Our runs used flash-linear-attention 0.5.2 and causal-conv1d 1.7.0;
   without them, training is much slower (and differs from ours by small numerical differences).
